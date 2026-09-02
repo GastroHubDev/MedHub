@@ -1,0 +1,48 @@
+# Substitui integralmente o application.yml de main no classpath de teste.
+spring:
+  datasource:
+    url: jdbc:h2:mem:notificacao_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    consumer:
+      group-id: notificacao-service
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      # Desligado por padrao: so o teste de consumo liga o listener, e ele o faz apontando
+      # para o broker embarcado. Sem isto todo @SpringBootTest tentaria falar com :9092.
+      auto-startup: false
+    admin:
+      auto-create: false
+
+server:
+  port: 0
+
+app:
+  jwt:
+    secret: c2VncmVkby1kZS10ZXN0ZS1jb20tdGFtYW5oby1zdWZpY2llbnRlLXBhcmEtaHMyNTYtb2s=
+    expiracao-minutos: 120
+    emissor: agendamento-service
+  notificacao:
+    remetente: nao-responda@hospital.com
+    # 29 de fevereiro as 03:00: o agendador nunca dispara sozinho durante os testes.
+    cron-lembretes: "0 0 3 29 2 *"
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    kafka: WARN
+    org.springframework.kafka: WARN

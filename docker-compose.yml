@@ -1,0 +1,209 @@
+# Sobe o ambiente completo com um unico comando:
+#   docker compose up --build
+#
+# Nenhum passo manual: o Postgres cria as tres bases pelo init.sql, o Flyway aplica os
+# schemas e a massa inicial, e os topicos do Kafka sao criados pelo proprio
+# agendamento-service na subida. Cada aplicacao so inicia depois que Kafka e Postgres
+# passam no healthcheck.
+#
+# Portas uteis:
+#   http://localhost:8080/swagger-ui.html  API de agendamento (REST)
+#   http://localhost:8082/graphiql         Historico (GraphQL)
+#   http://localhost:8090                  Kafka UI - topicos, mensagens e lag dos grupos
+#   http://localhost:8025                  MailHog - caixa de entrada dos lembretes
+
+services:
+
+  # ----------------------------------------------------------------
+  # Infraestrutura
+  # ----------------------------------------------------------------
+
+  kafka:
+    # KRaft: sem Zookeeper. A versao casa com o kafka-clients trazido pelo Spring Boot 3.5.16.
+    image: apache/kafka:3.9.2
+    container_name: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNO://:29092
+      # Dois listeners: os containers falam com kafka:9092, o host com localhost:29092.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNO://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNO:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Broker unico: nao ha para onde replicar.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Sete dias de retencao: espaco de sobra para demonstrar o replay do historico.
+      KAFKA_LOG_RETENTION_HOURS: 168
+      CLUSTER_ID: tech-challenge-kafka-fase3
+    ports:
+      - "29092:29092"
+    volumes:
+      - dados-kafka:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+    networks: [hospital]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: hospital
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "8090:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [hospital]
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    environment:
+      POSTGRES_USER: hospital
+      POSTGRES_PASSWORD: hospital
+      # A base padrao existe so para o healthcheck; as tres reais vem do init.sql.
+      POSTGRES_DB: hospital
+    ports:
+      - "5432:5432"
+    volumes:
+      - dados-postgres:/var/lib/postgresql/data
+      # A flag :z e necessaria no Fedora/RHEL por causa do SELinux.
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro,z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hospital -d hospital"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [hospital]
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # caixa de entrada: http://localhost:8025
+    networks: [hospital]
+
+  # ----------------------------------------------------------------
+  # Aplicacoes
+  # ----------------------------------------------------------------
+
+  agendamento-service:
+    build:
+      context: .
+      dockerfile: agendamento-service/Dockerfile
+    container_name: agendamento-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: agendamento
+      DB_USER: hospital
+      DB_PASSWORD: hospital
+      KAFKA_BOOTSTRAP: kafka:9092
+      # Em producao viria de um cofre de segredos, jamais versionada.
+      JWT_SECRET: cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw
+      JWT_EXPIRACAO_MINUTOS: 120
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [hospital]
+
+  notificacao-service:
+    build:
+      context: .
+      dockerfile: notificacao-service/Dockerfile
+    container_name: notificacao-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: notificacao
+      DB_USER: hospital
+      DB_PASSWORD: hospital
+      KAFKA_BOOTSTRAP: kafka:9092
+      # Mesmo segredo do agendamento: este servico valida o token, nunca o emite.
+      JWT_SECRET: cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw
+      MAIL_HOST: mailhog
+      MAIL_PORT: 1025
+      # Lembretes diarios as 08:00. Para ver o agendador rodando agora, suba com:
+      #   CRON_LEMBRETES="0 * * * * *" docker compose up
+      # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8025
+      CRON_LEMBRETES: ${CRON_LEMBRETES:-0 0 8 * * *}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [hospital]
+
+  historico-service:
+    build:
+      context: .
+      dockerfile: historico-service/Dockerfile
+    container_name: historico-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: historico
+      DB_USER: hospital
+      DB_PASSWORD: hospital
+      KAFKA_BOOTSTRAP: kafka:9092
+      JWT_SECRET: cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw
+      # Trocar este grupo (com a base zerada) faz o read model ser reconstruido a partir do
+      # log do Kafka. Veja "Prova de replay" no README.
+      SPRING_KAFKA_CONSUMER_GROUP_ID: ${HISTORICO_GROUP_ID:-historico-service}
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [hospital]
+
+volumes:
+  dados-postgres:
+  dados-kafka:
+
+networks:
+  hospital:
+    driver: bridge

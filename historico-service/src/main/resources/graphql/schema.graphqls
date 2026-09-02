@@ -1,0 +1,100 @@
+# API de leitura do historico de consultas.
+#
+# Somente queries: este servico e o lado de leitura do CQRS e nao tem escrita. O requisito
+# "medicos podem visualizar e editar o historico de consultas" e atendido pelo
+# PUT /api/consultas/{id} do agendamento-service, cuja alteracao chega aqui pelo Kafka e
+# aparece na trilha `eventos` abaixo.
+#
+# Datas trafegam como String ISO-8601 de proposito, evitando um scalar customizado.
+
+type Query {
+    """
+    Historico completo de um paciente, com totais.
+    Medicos e enfermeiros podem informar qualquer pacienteId; pacientes recebem sempre o
+    proprio historico, e informar o id de outro resulta em FORBIDDEN.
+    """
+    historicoPaciente(pacienteId: ID, filtro: FiltroHistorico): HistoricoPaciente!
+
+    "Atalho para o historico de quem esta autenticado. Util para o perfil PACIENTE."
+    minhasConsultas(filtro: FiltroHistorico): [ConsultaHistorico!]!
+
+    "Apenas as consultas que ainda vao acontecer."
+    consultasFuturas(pacienteId: ID): [ConsultaHistorico!]!
+
+    "Detalhe de uma consulta, incluindo a trilha de eventos que a formou."
+    consultaHistorico(consultaId: ID!): ConsultaHistorico
+
+    "Numeros consolidados do paciente."
+    estatisticasPaciente(pacienteId: ID): EstatisticasPaciente!
+}
+
+"Todo campo e opcional; um campo nulo simplesmente nao filtra."
+input FiltroHistorico {
+    apenasFuturas: Boolean
+    status: [StatusConsulta!]
+    de: String
+    ate: String
+    especialidade: String
+    medicoId: ID
+}
+
+type HistoricoPaciente {
+    pacienteId: ID!
+    pacienteNome: String
+    totalConsultas: Int!
+    consultas: [ConsultaHistorico!]!
+}
+
+type ConsultaHistorico {
+    consultaId: ID!
+    dataHora: String!
+    status: StatusConsulta!
+    observacoes: String
+    paciente: PacienteResumo!
+    medico: MedicoResumo!
+    versao: Int!
+    atualizadoEm: String!
+    "Trilha de auditoria: os eventos Kafka que produziram o estado acima."
+    eventos: [EventoConsulta!]!
+}
+
+type PacienteResumo {
+    id: ID!
+    nome: String!
+    email: String!
+}
+
+type MedicoResumo {
+    id: ID!
+    nome: String!
+    especialidade: String
+}
+
+type EventoConsulta {
+    tipo: TipoEvento!
+    statusResultante: StatusConsulta!
+    versao: Int!
+    ocorridoEm: String!
+    registradoEm: String!
+}
+
+type EstatisticasPaciente {
+    pacienteId: ID!
+    total: Int!
+    agendadas: Int!
+    realizadas: Int!
+    canceladas: Int!
+    futuras: Int!
+}
+
+enum StatusConsulta {
+    AGENDADA
+    REALIZADA
+    CANCELADA
+}
+
+enum TipoEvento {
+    CONSULTA_CRIADA
+    CONSULTA_ATUALIZADA
+    CONSULTA_CANCELADA
+}

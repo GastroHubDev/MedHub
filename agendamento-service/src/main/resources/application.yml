@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: agendamento-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:agendamento}
+    username: ${DB_USER:agendamento}
+    password: ${DB_PASSWORD:agendamento}
+
+  jpa:
+    # O Flyway e dono do schema; o Hibernate apenas confere. Divergencia entre entidade e
+    # DDL derruba a subida em vez de alterar tabela silenciosamente.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: America/Sao_Paulo
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # O payload ja sai serializado da outbox: enviamos a String como esta, sem
+      # re-serializar, o que mantem no topico exatamente o JSON que foi gravado no banco.
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  jwt:
+    # Em producao viria de um cofre de segredos; versionada aqui apenas para o ambiente de avaliacao.
+    secret: ${JWT_SECRET:cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw}
+    expiracao-minutos: ${JWT_EXPIRACAO_MINUTOS:120}
+    emissor: agendamento-service
+  outbox:
+    intervalo-ms: ${OUTBOX_INTERVALO_MS:2000}
+    tamanho-lote: ${OUTBOX_TAMANHO_LOTE:100}
+
+logging:
+  level:
+    br.com.fiap.agendamento: ${LOG_LEVEL:INFO}

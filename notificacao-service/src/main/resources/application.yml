@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: notificacao-service
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:notificacao}
+    username: ${DB_USER:notificacao}
+    password: ${DB_PASSWORD:notificacao}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: America/Sao_Paulo
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: notificacao-service
+      # earliest para que um servico que sobe depois do agendamento nao perca eventos ja
+      # publicados - o log do Kafka guarda o historico, diferente de uma fila consumida.
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        spring.json.trusted.packages: br.com.fiap.comum.evento
+    listener:
+      ack-mode: record
+
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
+server:
+  port: ${SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  jwt:
+    # Mesmo segredo e emissor do agendamento: este servico valida o token, nunca o emite.
+    secret: ${JWT_SECRET:cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw}
+    expiracao-minutos: ${JWT_EXPIRACAO_MINUTOS:120}
+    emissor: agendamento-service
+  notificacao:
+    remetente: ${MAIL_REMETENTE:nao-responda@hospital.com}
+    # Diariamente as 08:00. Para ver o agendador rodando durante a avaliacao, suba com
+    #   CRON_LEMBRETES="0 * * * * *" docker compose up
+    # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8025
+    cron-lembretes: ${CRON_LEMBRETES:0 0 8 * * *}
+
+logging:
+  level:
+    br.com.fiap.notificacao: ${LOG_LEVEL:INFO}

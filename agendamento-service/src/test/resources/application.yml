@@ -1,0 +1,49 @@
+# Sobrescreve o application.yml de main (mesmo caminho no classpath). Tudo que os testes
+# precisam tem de estar aqui - o arquivo de producao nao e mesclado, e sim substituido.
+spring:
+  datasource:
+    url: jdbc:h2:mem:agendamento_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  # As migracoes reais rodam nos testes: SQL neutro que funciona no Postgres e no H2.
+  # Se uma migracao quebrar ou divergir das entidades, o build acusa aqui.
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    admin:
+      # Sem isto, o KafkaAdmin tentaria criar os topicos contra um broker inexistente
+      # na maioria dos testes, que nao precisam de Kafka nenhum.
+      auto-create: false
+
+server:
+  port: 0
+
+app:
+  jwt:
+    secret: c2VncmVkby1kZS10ZXN0ZS1jb20tdGFtYW5oby1zdWZpY2llbnRlLXBhcmEtaHMyNTYtb2s=
+    expiracao-minutos: 120
+    emissor: agendamento-service
+  outbox:
+    # Agendador praticamente desligado: cada teste dispara o publicador quando quer,
+    # em vez de disputar com um agendador correndo em paralelo.
+    intervalo-ms: 3600000
+    atraso-inicial-ms: 3600000
+    tamanho-lote: 100
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    kafka: WARN
+    org.springframework.kafka: WARN
