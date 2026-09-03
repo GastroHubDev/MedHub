@@ -11,12 +11,20 @@
 # projetos na mesma maquina. Os nomes de SERVICO (postgres, kafka, agendamento-service...)
 # continuam iguais - e sao eles que valem para o DNS interno da rede, nao o container_name.
 #
+# As portas de HOST ficam na faixa 81xx porque 8080, 8081, 5432, 1025 e 8025 sao disputadas
+# por outros projetos que convivem nesta maquina. Todas sao sobrescreviveis por variavel de
+# ambiente, entao um conflito novo se resolve sem editar este arquivo:
+#   PORTA_AGENDAMENTO=8280 docker compose up
+#
+# As portas de CONTAINER (8080, 8081, 8082, 5432...) nao mudam: sao elas que valem para a
+# comunicacao interna, para os upstreams do nginx e para o front.
+#
 # Portas uteis:
-#   http://localhost:3000                  Console de testes (front)
-#   http://localhost:8080/swagger-ui.html  API de agendamento (REST)
-#   http://localhost:8082/graphiql         Historico (GraphQL)
-#   http://localhost:8090                  Kafka UI - topicos, mensagens e lag dos grupos
-#   http://localhost:8025                  MailHog - caixa de entrada dos lembretes
+#   http://localhost:3000                  Console de testes (front) - comeca por aqui
+#   http://localhost:8180/swagger-ui.html  API de agendamento (REST)
+#   http://localhost:8182/graphiql         Historico (GraphQL)
+#   http://localhost:8190                  Kafka UI - topicos, mensagens e lag dos grupos
+#   http://localhost:8125                  MailHog - caixa de entrada dos lembretes
 
 services:
 
@@ -66,7 +74,7 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       DYNAMIC_CONFIG_ENABLED: "true"
     ports:
-      - "8090:8080"
+      - "${PORTA_KAFKA_UI:-8190}:8080"
     depends_on:
       kafka:
         condition: service_healthy
@@ -81,7 +89,7 @@ services:
       # A base padrao existe so para o healthcheck; as tres reais vem do init.sql.
       POSTGRES_DB: hospital
     ports:
-      - "5432:5432"
+      - "${PORTA_POSTGRES:-5442}:5432"
     volumes:
       - dados-postgres:/var/lib/postgresql/data
       # A flag :z e necessaria no Fedora/RHEL por causa do SELinux.
@@ -97,8 +105,8 @@ services:
     image: mailhog/mailhog:v1.0.1
     container_name: hospital-mailhog
     ports:
-      - "1025:1025"  # SMTP
-      - "8025:8025"  # caixa de entrada: http://localhost:8025
+      - "${PORTA_MAILHOG_SMTP:-1125}:1025"  # SMTP
+      - "${PORTA_MAILHOG_WEB:-8125}:8025"   # caixa de entrada: http://localhost:8125
     networks: [hospital]
 
   # ----------------------------------------------------------------
@@ -121,7 +129,7 @@ services:
       JWT_SECRET: cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw
       JWT_EXPIRACAO_MINUTOS: 120
     ports:
-      - "8080:8080"
+      - "${PORTA_AGENDAMENTO:-8180}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -154,10 +162,10 @@ services:
       MAIL_PORT: 1025
       # Lembretes diarios as 08:00. Para ver o agendador rodando agora, suba com:
       #   CRON_LEMBRETES="0 * * * * *" docker compose up
-      # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8025
+      # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8125
       CRON_LEMBRETES: ${CRON_LEMBRETES:-0 0 8 * * *}
     ports:
-      - "8081:8081"
+      - "${PORTA_NOTIFICACAO:-8181}:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -191,7 +199,7 @@ services:
       # log do Kafka. Veja "Prova de replay" no README.
       SPRING_KAFKA_CONSUMER_GROUP_ID: ${HISTORICO_GROUP_ID:-historico-service}
     ports:
-      - "8082:8082"
+      - "${PORTA_HISTORICO:-8182}:8082"
     depends_on:
       postgres:
         condition: service_healthy
@@ -216,7 +224,7 @@ services:
       dockerfile: Dockerfile
     container_name: hospital-frontend
     ports:
-      - "3000:80"
+      - "${PORTA_FRONT:-3000}:80"
     # Nao e cosmetico: o nginx resolve os nomes dos upstreams na subida e SE RECUSA A INICIAR
     # se um deles ainda nao existe na rede. Esperar os tres saudaveis evita esse tombo.
     depends_on:

@@ -117,13 +117,20 @@ Um único comando: o Postgres cria as três bases, o Flyway aplica os schemas e 
 e o `agendamento-service` cria os tópicos do Kafka na subida. As aplicações só iniciam depois
 que Kafka e Postgres passam no healthcheck.
 
+> **Portas.** As portas de host ficam na faixa `81xx` porque `8080`, `8081`, `5432`, `1025` e
+> `8025` são disputadas por outros projetos que costumam conviver na mesma máquina. Todas são
+> sobrescrevíveis por variável de ambiente — copie `.env.example` para `.env` e ajuste, ou passe
+> na linha de comando: `PORTA_AGENDAMENTO=8280 docker compose up`. As portas **internas** dos
+> containers (8080, 8081, 8082, 5432…) não mudam: são elas que valem para o front, para os
+> upstreams do nginx e para a comunicação entre os serviços.
+
 | O quê | Onde |
 |---|---|
 | **Console de testes (front)** | **http://localhost:3000** |
-| Swagger (API de agendamento) | http://localhost:8080/swagger-ui.html |
-| GraphiQL (histórico) | http://localhost:8082/graphiql |
-| Kafka UI — tópicos, mensagens e lag | http://localhost:8090 |
-| MailHog — caixa de entrada | http://localhost:8025 |
+| Swagger (API de agendamento) | http://localhost:8180/swagger-ui.html |
+| GraphiQL (histórico) | http://localhost:8182/graphiql |
+| Kafka UI — tópicos, mensagens e lag | http://localhost:8190 |
+| MailHog — caixa de entrada | http://localhost:8125 |
 | Health checks | `:8080` `:8081` `:8082` + `/actuator/health` |
 
 ### Rodando os testes
@@ -144,7 +151,7 @@ O lembrete D-1 roda às 08:00. Para não esperar, suba disparando a cada minuto:
 CRON_LEMBRETES="0 * * * * *" docker compose up
 ```
 
-Acompanhe as mensagens chegando em http://localhost:8025.
+Acompanhe as mensagens chegando em http://localhost:8125.
 
 ---
 
@@ -249,7 +256,7 @@ silenciosa para o próprio id — reescrever mascararia a tentativa de acesso in
 ### Login
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
+curl -X POST http://localhost:8180/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"medico@hospital.com","senha":"senha123"}'
 ```
@@ -269,11 +276,11 @@ O mesmo token é aceito pelos três serviços — eles compartilham segredo e em
 ### Registrar e editar consultas (REST)
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:8180/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"enfermeiro@hospital.com","senha":"senha123"}' | jq -r .token)
 
-curl -X POST http://localhost:8080/api/consultas \
+curl -X POST http://localhost:8180/api/consultas \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"pacienteId":4,"medicoId":1,"dataHora":"2026-10-15T09:00:00","observacoes":"Retorno"}'
 ```
@@ -431,7 +438,7 @@ criadas:
 
 ```bash
 # 1. Confira o estado atual do histórico
-curl -s -X POST http://localhost:8082/graphql \
+curl -s -X POST http://localhost:8182/graphql \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"query":"{ estatisticasPaciente(pacienteId: 4) { total } }"}'
 

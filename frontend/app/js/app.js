@@ -821,19 +821,14 @@
   }
 
   /**
-   * Reproduz a requisicao no terminal. Usa a porta direta do servico (8080/8081/8082) em vez do
-   * proxy, porque fora do browser nao ha motivo para passar pelo nginx.
+   * Reproduz a requisicao no terminal.
+   *
+   * Usa a origem desta propria pagina - ou seja, o proxy do nginx - em vez da porta de host de
+   * cada servico. O comando continua valido mesmo que as portas publicadas mudem, e nao ha um
+   * mapa de portas aqui para manter em sincronia com o docker-compose.
    */
   function montarCurl(entrada) {
-    const portas = { '/api/agendamento': 8080, '/api/notificacao': 8081, '/graphql': 8082 };
-    let url = entrada.caminho;
-    for (const [prefixo, porta] of Object.entries(portas)) {
-      if (entrada.caminho.startsWith(prefixo)) {
-        const resto = prefixo === '/graphql' ? '/graphql' : `/api${entrada.caminho.slice(prefixo.length)}`;
-        url = `http://localhost:${porta}${resto}`;
-        break;
-      }
-    }
+    const url = `${window.location.origin}${entrada.caminho}`;
     const partes = [`curl -X ${entrada.metodo} '${url}'`];
     Object.entries(entrada.requisicao.cabecalhos || {}).forEach(([chave, valor]) => {
       // O token foi mascarado para exibicao; no curl fica o marcador para o usuario preencher.

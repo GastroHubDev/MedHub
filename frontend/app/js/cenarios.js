@@ -429,7 +429,7 @@ const Cenarios = (() => {
     if (notificacao.ok) {
       const tipos = notificacao.notificacoes.map((n) => n.tipo).join(', ');
       passos.push(passo(5, 'Notificacao registrada pelo outro consumer group', 'ok',
-        `${tipos} · confira em http://localhost:8025`, notificacao.duracaoMs));
+        `${tipos} · confira em http://localhost:8125`, notificacao.duracaoMs));
     } else {
       passos.push(passo(5, 'Notificacao registrada pelo outro consumer group', 'alerta',
         `Nada em ${notificacao.duracaoMs} ms. O historico funcionou, entao o topico esta ok; `

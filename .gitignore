@@ -34,3 +34,6 @@ bin/
 ### Sistema operacional ###
 .DS_Store
 *.log
+
+### Variaveis locais (o .env.example fica versionado) ###
+.env

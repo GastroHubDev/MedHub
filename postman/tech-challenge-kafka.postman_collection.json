@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Tech Challenge Fase 3 - Backend Hospitalar com Kafka",
-    "description": "Collection completa do Tech Challenge Fase 3 (FIAP).\n\nARQUITETURA\n  agendamento-service :8080  REST, escrita, emite o JWT\n  notificacao-service :8081  consome os eventos e avisa o paciente\n  historico-service   :8082  GraphQL, leitura, read model vindo do Kafka\n\nCOMO USAR\n  1. docker compose up --build\n  2. Rode a collection inteira no Runner (Collection > Run).\n     As pastas estao na ordem correta e os tokens sao salvos automaticamente.\n  3. Entre a pasta 2 e a 3 ha propagacao assincrona pelo Kafka (~1-2s). No Runner,\n     configure um delay de 1000ms se alguma asserção da pasta 3 falhar por corrida.\n\nUSUARIOS (senha: senha123)\n  medico@hospital.com      MEDICO      registra, edita e cancela; ve tudo\n  enfermeiro@hospital.com  ENFERMEIRO  registra e consulta; nao edita\n  paciente@hospital.com    PACIENTE    ve apenas as proprias consultas (id 4)\n  paciente2@hospital.com   PACIENTE    usado para provar o bloqueio cruzado (id 5)\n\nOBSERVACAO SOBRE GRAPHQL\n  O GraphQL responde HTTP 200 mesmo em erro. O que distingue os casos e\n  errors[0].extensions.classification: UNAUTHORIZED, FORBIDDEN, NOT_FOUND, BAD_REQUEST.",
+    "description": "Collection completa do Tech Challenge Fase 3 (FIAP).\n\nARQUITETURA\n  agendamento-service :8080 (host 8180)  REST, escrita, emite o JWT\n  notificacao-service :8081 (host 8181)  consome os eventos e avisa o paciente\n  historico-service   :8082 (host 8182)  GraphQL, leitura, read model vindo do Kafka\n\nCOMO USAR\n  1. docker compose up --build\n  2. Rode a collection inteira no Runner (Collection > Run).\n     As pastas estao na ordem correta e os tokens sao salvos automaticamente.\n  3. Entre a pasta 2 e a 3 ha propagacao assincrona pelo Kafka (~1-2s). No Runner,\n     configure um delay de 1000ms se alguma asserção da pasta 3 falhar por corrida.\n\nUSUARIOS (senha: senha123)\n  medico@hospital.com      MEDICO      registra, edita e cancela; ve tudo\n  enfermeiro@hospital.com  ENFERMEIRO  registra e consulta; nao edita\n  paciente@hospital.com    PACIENTE    ve apenas as proprias consultas (id 4)\n  paciente2@hospital.com   PACIENTE    usado para provar o bloqueio cruzado (id 5)\n\nOBSERVACAO SOBRE GRAPHQL\n  O GraphQL responde HTTP 200 mesmo em erro. O que distingue os casos e\n  errors[0].extensions.classification: UNAUTHORIZED, FORBIDDEN, NOT_FOUND, BAD_REQUEST.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -25,15 +25,15 @@
   "variable": [
     {
       "key": "urlAgendamento",
-      "value": "http://localhost:8080"
+      "value": "http://localhost:8180"
     },
     {
       "key": "urlNotificacao",
-      "value": "http://localhost:8081"
+      "value": "http://localhost:8181"
     },
     {
       "key": "urlHistorico",
-      "value": "http://localhost:8082"
+      "value": "http://localhost:8182"
     },
     {
       "key": "tokenMedico",
@@ -1244,7 +1244,7 @@
     },
     {
       "name": "6. Notificacoes (efeito do Kafka)",
-      "description": "Comprova que o evento publicado pelo agendamento foi consumido pelo notificacao-service. As mensagens tambem podem ser lidas na caixa do MailHog em http://localhost:8025.",
+      "description": "Comprova que o evento publicado pelo agendamento foi consumido pelo notificacao-service. As mensagens tambem podem ser lidas na caixa do MailHog em http://localhost:8125.",
       "item": [
         {
           "name": "Notificacoes da consulta criada",
