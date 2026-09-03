@@ -119,6 +119,7 @@ que Kafka e Postgres passam no healthcheck.
 
 | O quê | Onde |
 |---|---|
+| **Console de testes (front)** | **http://localhost:3000** |
 | Swagger (API de agendamento) | http://localhost:8080/swagger-ui.html |
 | GraphiQL (histórico) | http://localhost:8082/graphiql |
 | Kafka UI — tópicos, mensagens e lag | http://localhost:8090 |
@@ -144,6 +145,58 @@ CRON_LEMBRETES="0 * * * * *" docker compose up
 ```
 
 Acompanhe as mensagens chegando em http://localhost:8025.
+
+---
+
+## Console de testes (front)
+
+`http://localhost:3000` — uma página estática servida por nginx, sem build, sem npm e sem CDN.
+Existe para validar o backend inteiro pelo browser, com foco nos **três níveis de acesso**.
+
+O que ela faz de diferente de um app comum: mantém **os três perfis logados ao mesmo tempo** e
+dispara a mesma requisição com os três tokens, lado a lado. A única diferença entre as colunas é
+a permissão de cada perfil.
+
+| Aba | Para quê |
+|---|---|
+| **Painel** | Saúde dos 3 serviços e o **fluxo ponta a ponta**: registra uma consulta, mede o tempo real que o evento leva para atravessar o Kafka e mostra o efeito nos dois consumidores |
+| **Agendamento** | REST de escrita — registrar, listar, editar e cancelar, com o interruptor *executar nos 3 perfis* |
+| **Histórico (GraphQL)** | As 5 queries com variáveis editáveis; a trilha `eventos` sai renderizada como linha do tempo |
+| **Notificações** | A trilha do `notificacao-service` — a prova de que o evento virou e-mail |
+| **Matriz de permissões** | Dispara ~48 verificações reais e compara com o esperado pelo enunciado |
+| **Console HTTP** | Toda requisição da página, com corpo de ida e volta, perfil, status e tempo; copia como `curl` |
+
+### Por que nginx com proxy reverso
+
+Os três serviços **não têm configuração de CORS** — e não precisam ter. O nginx serve o front e
+encaminha as chamadas, então para o browser tudo vem da mesma origem (`localhost:3000`):
+
+```
+/                      arquivos estáticos
+/api/agendamento/*  -> agendamento-service:8080/api/*
+/api/notificacao/*  -> notificacao-service:8081/api/*
+/graphql            -> historico-service:8082/graphql
+/health/{servico}   -> <servico>/actuator/health
+```
+
+Nenhuma requisição cross-origin acontece, e **nenhuma linha do código Java precisou mudar** para
+o front existir.
+
+### A matriz de permissões
+
+É a aba que responde diretamente a "ver a visão dos 3 tipos de acesso". Cada célula **dispara a
+requisição de verdade** e compara o resultado com o previsto pelo enunciado — verde é
+conformidade, vermelho é divergência real. Dois cuidados a destacar:
+
+- Os cenários de escrita usam uma **consulta descartável** criada na hora, então rodar a matriz
+  não altera as consultas 1–4 da seed e o resultado é o mesmo em toda execução.
+- Cada perfil agenda em um **horário próprio**: horários iguais esbarrariam no índice único
+  `uk_consulta_medico_horario` e devolveriam `400` (double-booking) no lugar do `201`/`403`
+  esperado — um falso negativo.
+
+Para o GraphQL, a comparação é feita sobre `errors[0].extensions.classification` e não sobre o
+status HTTP, porque o protocolo responde **200 mesmo ao negar acesso**. A matriz mostra
+`200 (FORBIDDEN)` nesses casos.
 
 ---
 
@@ -450,6 +503,9 @@ tech-challenge-kafka/
 ├── agendamento-service/          :8080 REST, Security, outbox, producer
 ├── notificacao-service/          :8081 consumer, projeção, lembretes, SMTP
 ├── historico-service/            :8082 consumer, read model, GraphQL
+├── frontend/                     :3000 console de testes (HTML/JS puro + nginx)
+│   ├── nginx.conf                proxy reverso: front e APIs na mesma origem
+│   └── app/                      index.html, styles.css e js/ (api, sessoes, graphql, cenarios, app)
 ├── docker/postgres/init.sql      cria as três bases
 ├── postman/                      collection + environment
 ├── docker-compose.yml

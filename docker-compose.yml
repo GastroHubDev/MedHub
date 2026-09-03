@@ -7,6 +7,7 @@
 # passam no healthcheck.
 #
 # Portas uteis:
+#   http://localhost:3000                  Console de testes (front)
 #   http://localhost:8080/swagger-ui.html  API de agendamento (REST)
 #   http://localhost:8082/graphiql         Historico (GraphQL)
 #   http://localhost:8090                  Kafka UI - topicos, mensagens e lag dos grupos
@@ -197,6 +198,35 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+    restart: unless-stopped
+    networks: [hospital]
+
+  # ----------------------------------------------------------------
+  # Front
+  # ----------------------------------------------------------------
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:80"
+    # Nao e cosmetico: o nginx resolve os nomes dos upstreams na subida e SE RECUSA A INICIAR
+    # se um deles ainda nao existe na rede. Esperar os tres saudaveis evita esse tombo.
+    depends_on:
+      agendamento-service:
+        condition: service_healthy
+      notificacao-service:
+        condition: service_healthy
+      historico-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/ > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
     restart: unless-stopped
     networks: [hospital]
 

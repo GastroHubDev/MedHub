@@ -8,3 +8,7 @@ docs/
 postman/
 README.md
 docker-compose.yml
+
+# O front tem contexto de build proprio (./frontend); os tres servicos Java nao precisam
+# dele no contexto deles.
+frontend/
