@@ -20,7 +20,7 @@
 # comunicacao interna, para os upstreams do nginx e para o front.
 #
 # Portas uteis:
-#   http://localhost:3000                  Console de testes (front) - comeca por aqui
+#   http://localhost:3030                  Console de testes (front) - comeca por aqui
 #   http://localhost:8180/swagger-ui.html  API de agendamento (REST)
 #   http://localhost:8182/graphiql         Historico (GraphQL)
 #   http://localhost:8190                  Kafka UI - topicos, mensagens e lag dos grupos
@@ -224,7 +224,7 @@ services:
       dockerfile: Dockerfile
     container_name: hospital-frontend
     ports:
-      - "${PORTA_FRONT:-3000}:80"
+      - "${PORTA_FRONT:-3030}:80"
     # Nao e cosmetico: o nginx resolve os nomes dos upstreams na subida e SE RECUSA A INICIAR
     # se um deles ainda nao existe na rede. Esperar os tres saudaveis evita esse tombo.
     depends_on:

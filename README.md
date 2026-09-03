@@ -126,7 +126,7 @@ que Kafka e Postgres passam no healthcheck.
 
 | O quê | Onde |
 |---|---|
-| **Console de testes (front)** | **http://localhost:3000** |
+| **Console de testes (front)** | **http://localhost:3030** |
 | Swagger (API de agendamento) | http://localhost:8180/swagger-ui.html |
 | GraphiQL (histórico) | http://localhost:8182/graphiql |
 | Kafka UI — tópicos, mensagens e lag | http://localhost:8190 |
@@ -157,7 +157,7 @@ Acompanhe as mensagens chegando em http://localhost:8125.
 
 ## Console de testes (front)
 
-`http://localhost:3000` — uma página estática servida por nginx, sem build, sem npm e sem CDN.
+`http://localhost:3030` — uma página estática servida por nginx, sem build, sem npm e sem CDN.
 Existe para validar o backend inteiro pelo browser, com foco nos **três níveis de acesso**.
 
 O que ela faz de diferente de um app comum: mantém **os três perfis logados ao mesmo tempo** e
@@ -176,7 +176,7 @@ a permissão de cada perfil.
 ### Por que nginx com proxy reverso
 
 Os três serviços **não têm configuração de CORS** — e não precisam ter. O nginx serve o front e
-encaminha as chamadas, então para o browser tudo vem da mesma origem (`localhost:3000`):
+encaminha as chamadas, então para o browser tudo vem da mesma origem (`localhost:3030`):
 
 ```
 /                      arquivos estáticos
@@ -510,7 +510,7 @@ tech-challenge-kafka/
 ├── agendamento-service/          :8080 REST, Security, outbox, producer
 ├── notificacao-service/          :8081 consumer, projeção, lembretes, SMTP
 ├── historico-service/            :8082 consumer, read model, GraphQL
-├── frontend/                     :3000 console de testes (HTML/JS puro + nginx)
+├── frontend/                     :3030 console de testes (HTML/JS puro + nginx)
 │   ├── nginx.conf                proxy reverso: front e APIs na mesma origem
 │   └── app/                      index.html, styles.css e js/ (api, sessoes, graphql, cenarios, app)
 ├── docker/postgres/init.sql      cria as três bases
