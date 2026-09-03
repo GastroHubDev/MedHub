@@ -6,6 +6,11 @@
 # agendamento-service na subida. Cada aplicacao so inicia depois que Kafka e Postgres
 # passam no healthcheck.
 #
+# Os container_name sao prefixados com "hospital-" de proposito: esse namespace e GLOBAL no
+# Docker, e nomes genericos como "postgres" ou "agendamento-service" colidem com outros
+# projetos na mesma maquina. Os nomes de SERVICO (postgres, kafka, agendamento-service...)
+# continuam iguais - e sao eles que valem para o DNS interno da rede, nao o container_name.
+#
 # Portas uteis:
 #   http://localhost:3000                  Console de testes (front)
 #   http://localhost:8080/swagger-ui.html  API de agendamento (REST)
@@ -22,7 +27,7 @@ services:
   kafka:
     # KRaft: sem Zookeeper. A versao casa com o kafka-clients trazido pelo Spring Boot 3.5.16.
     image: apache/kafka:3.9.2
-    container_name: kafka
+    container_name: hospital-kafka
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -55,7 +60,7 @@ services:
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
-    container_name: kafka-ui
+    container_name: hospital-kafka-ui
     environment:
       KAFKA_CLUSTERS_0_NAME: hospital
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
@@ -69,7 +74,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: postgres
+    container_name: hospital-postgres
     environment:
       POSTGRES_USER: hospital
       POSTGRES_PASSWORD: hospital
@@ -90,7 +95,7 @@ services:
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
-    container_name: mailhog
+    container_name: hospital-mailhog
     ports:
       - "1025:1025"  # SMTP
       - "8025:8025"  # caixa de entrada: http://localhost:8025
@@ -104,7 +109,7 @@ services:
     build:
       context: .
       dockerfile: agendamento-service/Dockerfile
-    container_name: agendamento-service
+    container_name: hospital-agendamento
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -135,7 +140,7 @@ services:
     build:
       context: .
       dockerfile: notificacao-service/Dockerfile
-    container_name: notificacao-service
+    container_name: hospital-notificacao
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -173,7 +178,7 @@ services:
     build:
       context: .
       dockerfile: historico-service/Dockerfile
-    container_name: historico-service
+    container_name: hospital-historico
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
@@ -209,7 +214,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: frontend
+    container_name: hospital-frontend
     ports:
       - "3000:80"
     # Nao e cosmetico: o nginx resolve os nomes dos upstreams na subida e SE RECUSA A INICIAR
