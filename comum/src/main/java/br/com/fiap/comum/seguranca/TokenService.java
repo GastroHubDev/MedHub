@@ -14,8 +14,12 @@ import javax.crypto.SecretKey;
 /**
  * Emissao e validacao do JWT (HS256).
  *
- * <p>Vive no modulo comum porque o agendamento emite e os demais servicos validam o mesmo
- * token: manter uma unica implementacao impede que as claims esperadas divirjam entre eles.</p>
+ * <p>
+ * Vive no modulo comum porque o agendamento emite e os demais servicos validam
+ * o mesmo
+ * token: manter uma unica implementacao impede que as claims esperadas divirjam
+ * entre eles.
+ * </p>
  */
 public class TokenService {
 
@@ -51,14 +55,24 @@ public class TokenService {
     }
 
     /**
-     * Valida assinatura, emissor e expiracao. Devolve vazio em qualquer falha - o chamador
-     * nao deve distinguir "token expirado" de "assinatura invalida" na resposta ao cliente.
+     * Valida assinatura, emissor e expiracao. Devolve vazio em qualquer falha - o
+     * chamador
+     * nao deve distinguir "token expirado" de "assinatura invalida" na resposta ao
+     * cliente.
      */
     public Optional<UsuarioAutenticado> validar(String token) {
-        return parse(token).map(claims -> UsuarioAutenticado.doToken(
-                claims.get(CLAIM_USUARIO_ID, Number.class).longValue(),
-                claims.getSubject(),
-                Role.valueOf(claims.get(CLAIM_ROLE, String.class))));
+        return parse(token).flatMap(this::extrairUsuario);
+    }
+
+    private Optional<UsuarioAutenticado> extrairUsuario(Claims claims) {
+        try {
+            return Optional.of(UsuarioAutenticado.doToken(
+                    claims.get(CLAIM_USUARIO_ID, Number.class).longValue(),
+                    claims.getSubject(),
+                    Role.valueOf(claims.get(CLAIM_ROLE, String.class))));
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return Optional.empty();
+        }
     }
 
     private Optional<Claims> parse(String token) {

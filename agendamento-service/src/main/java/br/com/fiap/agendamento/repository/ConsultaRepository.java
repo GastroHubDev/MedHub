@@ -30,11 +30,7 @@ public interface ConsultaRepository extends JpaRepository<Consulta, Long> {
     @EntityGraph(attributePaths = {"paciente", "paciente.usuario", "medico", "medico.usuario"})
     Optional<Consulta> findWithRelacoesById(Long id);
 
-    /**
-     * Barreira de double-booking na camada de servico; o indice unico parcial (que tambem
-     * ignora CANCELADA) e a barreira final. Uma consulta cancelada nao ocupa mais o horario -
-     * senao o mesmo par medico/horario ficaria bloqueado para sempre apos um cancelamento.
-     */
+    /** Barreira de double-booking na camada de servico; o indice unico e a barreira final. */
     boolean existsByMedicoIdAndDataHoraAndStatusNot(Long medicoId, LocalDateTime dataHora,
                                                     StatusConsulta statusExcluido);
 

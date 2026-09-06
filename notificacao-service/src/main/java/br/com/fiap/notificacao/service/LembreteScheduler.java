@@ -40,10 +40,6 @@ public class LembreteScheduler {
      */
     @Scheduled(cron = "${app.notificacao.cron-lembretes}", zone = "America/Sao_Paulo")
     public void enviarLembretesDoProximoDia() {
-        // FUSO explicito: os containers rodam com o fuso padrao da JVM em UTC (nenhuma env TZ
-        // no compose), mas o dataHora da consulta e o horario local de Brasilia informado pelo
-        // usuario. Usar LocalDateTime.now() sem fuso comparava "agora em UTC" com "agora em
-        // Brasilia", atrasando a janela de lembrete em 3 horas.
         final LocalDateTime agora = LocalDateTime.now(FUSO);
         final List<ConsultaAgendada> consultas =
                 consultaRepository.findByStatusAndDataHoraBetweenOrderByDataHoraAsc(

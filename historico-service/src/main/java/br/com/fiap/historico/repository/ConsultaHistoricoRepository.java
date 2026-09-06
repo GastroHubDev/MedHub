@@ -18,13 +18,9 @@ public interface ConsultaHistoricoRepository
     /**
      * Consulta unica que atende a todas as combinacoes de filtro do GraphQL.
      *
-     * <p>Cada filtro ausente simplesmente nao vira predicado: em vez do truque classico
-     * {@code (:param IS NULL OR ...)} - que forca o Postgres a inferir o tipo de um bind
-     * parameter mesmo quando ele nunca vai ser comparado de verdade, e que o Hibernate 6.6
-     * infere errado quando o mesmo parametro aparece dentro de uma funcao como LOWER()
-     * (vira "function lower(bytea) does not exist") - a Specification so adiciona a condicao
-     * quando o valor do filtro existe. Um filtro nulo nunca chega a virar parametro, entao
-     * nao ha tipo nenhum para o driver adivinhar.</p>
+     * <p>Cada filtro ausente simplesmente nao vira predicado, em vez de um
+     * {@code (:param IS NULL OR ...)} que sempre passa pelo parametro mesmo quando ele nao
+     * filtra nada.</p>
      */
     default List<ConsultaHistorico> buscarComFiltros(Long pacienteId, Long medicoId,
                                                       LocalDateTime de, LocalDateTime ate,

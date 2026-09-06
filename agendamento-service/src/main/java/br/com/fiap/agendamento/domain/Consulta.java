@@ -45,10 +45,8 @@ public class Consulta {
 
     /**
      * Espelha {@code dataHora} enquanto a consulta ocupa o horario, e vira {@code null} quando
-     * ela e cancelada. Existe so para sustentar {@code uk_consulta_medico_horario}: um indice
-     * unico parcial de verdade (com {@code WHERE status <> 'CANCELADA'}) nao roda no H2 dos
-     * testes, mas duas linhas com {@code null} nunca colidem numa constraint UNIQUE em nenhum
-     * dos dois bancos - entao uma consulta cancelada nunca mais bloqueia o horario para outra.
+     * ela e cancelada. Sustenta {@code uk_consulta_medico_horario}: linhas com {@code null}
+     * nunca colidem numa constraint UNIQUE.
      */
     @Column(name = "horario_ocupado")
     private LocalDateTime horarioOcupado;

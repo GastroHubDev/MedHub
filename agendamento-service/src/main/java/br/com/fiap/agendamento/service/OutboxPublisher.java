@@ -4,6 +4,7 @@ import br.com.fiap.agendamento.domain.OutboxEvento;
 import br.com.fiap.agendamento.repository.OutboxEventoRepository;
 import br.com.fiap.comum.evento.Topicos;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,13 +30,16 @@ public class OutboxPublisher {
     private final OutboxEventoRepository outboxRepository;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final int tamanhoDoLote;
+    private final long timeoutPublicacaoMs;
 
     public OutboxPublisher(OutboxEventoRepository outboxRepository,
                            KafkaTemplate<String, String> kafkaTemplate,
-                           @Value("${app.outbox.tamanho-lote:100}") int tamanhoDoLote) {
+                           @Value("${app.outbox.tamanho-lote:100}") int tamanhoDoLote,
+                           @Value("${app.outbox.timeout-publicacao-ms:5000}") long timeoutPublicacaoMs) {
         this.outboxRepository = outboxRepository;
         this.kafkaTemplate = kafkaTemplate;
         this.tamanhoDoLote = tamanhoDoLote;
+        this.timeoutPublicacaoMs = timeoutPublicacaoMs;
     }
 
     /**
@@ -62,9 +66,11 @@ public class OutboxPublisher {
         try {
             // Envio sincrono de proposito: so marcamos como publicado com o ack do broker.
             // A chave e o id da consulta, o que mantem a ordem dos eventos de uma consulta
-            // dentro da mesma particao.
+            // dentro da mesma particao. Timeout curto para nao travar o lote inteiro nem a
+            // transacao caso o broker fique lento ou fora do ar.
             kafkaTemplate.send(Topicos.CONSULTAS,
-                    String.valueOf(evento.getAgregadoId()), evento.getPayload()).get();
+                    String.valueOf(evento.getAgregadoId()), evento.getPayload())
+                    .get(timeoutPublicacaoMs, TimeUnit.MILLISECONDS);
 
             evento.marcarPublicado();
             log.debug("Evento {} da consulta {} publicado no topico {}",

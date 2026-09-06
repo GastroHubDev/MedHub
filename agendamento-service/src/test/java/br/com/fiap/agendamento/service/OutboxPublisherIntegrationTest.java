@@ -150,14 +150,14 @@ class OutboxPublisherIntegrationTest {
                 new CriarConsultaRequest(4L, 1L, dataHora, "Original"));
         outboxPublisher.publicarPendentes();
         ultimoEventoDoTopico();
-
+        
         consultaService.atualizar(consulta.getId(),
-                new AtualizarConsultaRequest(null, StatusConsulta.REALIZADA, "Compareceu"));
+                new AtualizarConsultaRequest(null, null, "Observacao atualizada"));
         outboxPublisher.publicarPendentes();
 
         final ConsultaEvento evento = ultimoEventoDoTopico();
         assertThat(evento.tipoEvento()).isEqualTo(TipoEvento.CONSULTA_ATUALIZADA);
-        assertThat(evento.status()).isEqualTo(StatusConsulta.REALIZADA);
+        assertThat(evento.observacoes()).isEqualTo("Observacao atualizada");
         assertThat(evento.versao()).isEqualTo(2L);
     }
 
