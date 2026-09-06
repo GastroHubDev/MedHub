@@ -4,6 +4,7 @@ import br.com.fiap.comum.evento.StatusConsulta;
 import br.com.fiap.notificacao.domain.ConsultaAgendada;
 import br.com.fiap.notificacao.repository.ConsultaAgendadaRepository;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,7 @@ public class LembreteScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(LembreteScheduler.class);
     private static final int JANELA_HORAS = 24;
+    private static final ZoneId FUSO = ZoneId.of("America/Sao_Paulo");
 
     private final ConsultaAgendadaRepository consultaRepository;
     private final NotificacaoService notificacaoService;
@@ -38,7 +40,11 @@ public class LembreteScheduler {
      */
     @Scheduled(cron = "${app.notificacao.cron-lembretes}", zone = "America/Sao_Paulo")
     public void enviarLembretesDoProximoDia() {
-        final LocalDateTime agora = LocalDateTime.now();
+        // FUSO explicito: os containers rodam com o fuso padrao da JVM em UTC (nenhuma env TZ
+        // no compose), mas o dataHora da consulta e o horario local de Brasilia informado pelo
+        // usuario. Usar LocalDateTime.now() sem fuso comparava "agora em UTC" com "agora em
+        // Brasilia", atrasando a janela de lembrete em 3 horas.
+        final LocalDateTime agora = LocalDateTime.now(FUSO);
         final List<ConsultaAgendada> consultas =
                 consultaRepository.findByStatusAndDataHoraBetweenOrderByDataHoraAsc(
                         StatusConsulta.AGENDADA, agora, agora.plusHours(JANELA_HORAS));

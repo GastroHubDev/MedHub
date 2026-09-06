@@ -48,7 +48,10 @@ public class HistoricoService {
 
     public List<ConsultaHistorico> consultasFuturas(Long pacienteIdSolicitado) {
         final Long pacienteAlvo = contextoSeguranca.resolverPacienteAlvo(pacienteIdSolicitado);
-        return buscar(pacienteAlvo, new FiltroHistorico(true, null, null, null, null, null));
+        // So AGENDADA: uma consulta cancelada nao e mais um compromisso futuro de verdade,
+        // mesmo que a data dela ainda nao tenha passado.
+        return buscar(pacienteAlvo,
+                new FiltroHistorico(true, List.of(StatusConsulta.AGENDADA), null, null, null, null));
     }
 
     public ConsultaHistorico consulta(Long consultaId) {
@@ -73,8 +76,8 @@ public class HistoricoService {
                 consultaRepository.countByPacienteIdAndStatus(pacienteAlvo, StatusConsulta.AGENDADA),
                 consultaRepository.countByPacienteIdAndStatus(pacienteAlvo, StatusConsulta.REALIZADA),
                 consultaRepository.countByPacienteIdAndStatus(pacienteAlvo, StatusConsulta.CANCELADA),
-                consultaRepository.countByPacienteIdAndDataHoraGreaterThanEqual(
-                        pacienteAlvo, LocalDateTime.now()));
+                consultaRepository.countByPacienteIdAndStatusAndDataHoraGreaterThanEqual(
+                        pacienteAlvo, StatusConsulta.AGENDADA, LocalDateTime.now()));
     }
 
     private List<ConsultaHistorico> buscar(Long pacienteId, FiltroHistorico filtro) {

@@ -94,7 +94,8 @@ class ConsultaServiceTest {
 
             when(pacienteRepository.findById(ID_PACIENTE)).thenReturn(Optional.of(paciente));
             when(medicoRepository.findById(ID_MEDICO)).thenReturn(Optional.of(medico));
-            when(consultaRepository.existsByMedicoIdAndDataHora(ID_MEDICO, amanha)).thenReturn(false);
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                    ID_MEDICO, amanha, StatusConsulta.CANCELADA)).thenReturn(false);
             when(consultaRepository.save(any(Consulta.class))).thenAnswer(i -> i.getArgument(0));
 
             final Consulta criada = consultaService.criar(requisicao);
@@ -125,7 +126,8 @@ class ConsultaServiceTest {
 
             when(pacienteRepository.findById(ID_PACIENTE)).thenReturn(Optional.of(paciente));
             when(medicoRepository.findById(ID_MEDICO)).thenReturn(Optional.of(medico));
-            when(consultaRepository.existsByMedicoIdAndDataHora(ID_MEDICO, amanha)).thenReturn(true);
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                    ID_MEDICO, amanha, StatusConsulta.CANCELADA)).thenReturn(true);
 
             assertThatThrownBy(() -> consultaService.criar(requisicao))
                     .isInstanceOf(RegraDeNegocioException.class)
@@ -196,7 +198,8 @@ class ConsultaServiceTest {
             final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
             final LocalDateTime novoHorario = LocalDateTime.now().plusDays(5);
             when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
-            when(consultaRepository.existsByMedicoIdAndDataHoraAndIdNot(ID_MEDICO, novoHorario, ID_CONSULTA))
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndIdNotAndStatusNot(
+                    ID_MEDICO, novoHorario, ID_CONSULTA, StatusConsulta.CANCELADA))
                     .thenReturn(true);
 
             assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,

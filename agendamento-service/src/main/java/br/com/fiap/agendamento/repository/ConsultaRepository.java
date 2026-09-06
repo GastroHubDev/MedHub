@@ -1,6 +1,7 @@
 package br.com.fiap.agendamento.repository;
 
 import br.com.fiap.agendamento.domain.Consulta;
+import br.com.fiap.comum.evento.StatusConsulta;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -29,8 +30,14 @@ public interface ConsultaRepository extends JpaRepository<Consulta, Long> {
     @EntityGraph(attributePaths = {"paciente", "paciente.usuario", "medico", "medico.usuario"})
     Optional<Consulta> findWithRelacoesById(Long id);
 
-    /** Barreira de double-booking na camada de servico; o indice unico e a barreira final. */
-    boolean existsByMedicoIdAndDataHora(Long medicoId, LocalDateTime dataHora);
+    /**
+     * Barreira de double-booking na camada de servico; o indice unico parcial (que tambem
+     * ignora CANCELADA) e a barreira final. Uma consulta cancelada nao ocupa mais o horario -
+     * senao o mesmo par medico/horario ficaria bloqueado para sempre apos um cancelamento.
+     */
+    boolean existsByMedicoIdAndDataHoraAndStatusNot(Long medicoId, LocalDateTime dataHora,
+                                                    StatusConsulta statusExcluido);
 
-    boolean existsByMedicoIdAndDataHoraAndIdNot(Long medicoId, LocalDateTime dataHora, Long id);
+    boolean existsByMedicoIdAndDataHoraAndIdNotAndStatusNot(Long medicoId, LocalDateTime dataHora,
+                                                            Long id, StatusConsulta statusExcluido);
 }

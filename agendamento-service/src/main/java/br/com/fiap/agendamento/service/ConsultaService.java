@@ -10,6 +10,7 @@ import br.com.fiap.agendamento.exception.RegraDeNegocioException;
 import br.com.fiap.agendamento.repository.ConsultaRepository;
 import br.com.fiap.agendamento.repository.MedicoRepository;
 import br.com.fiap.agendamento.repository.PacienteRepository;
+import br.com.fiap.comum.evento.StatusConsulta;
 import br.com.fiap.comum.evento.TipoEvento;
 import br.com.fiap.comum.seguranca.ContextoSeguranca;
 import java.time.LocalDateTime;
@@ -78,7 +79,8 @@ public class ConsultaService {
                 .orElseThrow(() -> new RecursoNaoEncontradoException(
                         "Medico %d nao encontrado".formatted(requisicao.medicoId())));
 
-        if (consultaRepository.existsByMedicoIdAndDataHora(medico.getId(), requisicao.dataHora())) {
+        if (consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                medico.getId(), requisicao.dataHora(), StatusConsulta.CANCELADA)) {
             throw new RegraDeNegocioException(
                     "O medico ja possui uma consulta agendada para este horario");
         }
@@ -100,8 +102,9 @@ public class ConsultaService {
         }
         if (requisicao.dataHora() != null) {
             validarDataFutura(requisicao.dataHora());
-            if (consultaRepository.existsByMedicoIdAndDataHoraAndIdNot(
-                    consulta.getMedico().getId(), requisicao.dataHora(), consulta.getId())) {
+            if (consultaRepository.existsByMedicoIdAndDataHoraAndIdNotAndStatusNot(
+                    consulta.getMedico().getId(), requisicao.dataHora(), consulta.getId(),
+                    StatusConsulta.CANCELADA)) {
                 throw new RegraDeNegocioException(
                         "O medico ja possui uma consulta agendada para este horario");
             }
