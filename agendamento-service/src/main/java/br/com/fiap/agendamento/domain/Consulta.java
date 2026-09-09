@@ -14,6 +14,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.LocalDateTime;
 
 /** Agregado central: uma consulta entre um paciente e um medico em determinado horario. */
@@ -55,6 +56,7 @@ public class Consulta {
      * Incrementada a cada alteracao e copiada para o evento. E o que permite aos consumidores
      * descartarem uma reentrega antiga sem sobrescrever um estado mais novo.
      */
+    @Version
     @Column(nullable = false)
     private long versao;
 
