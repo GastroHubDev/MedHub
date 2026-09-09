@@ -44,6 +44,14 @@ public class Consulta {
     private String observacoes;
 
     /**
+     * Espelha {@code dataHora} enquanto a consulta ocupa o horario, e vira {@code null} quando
+     * ela e cancelada. Sustenta {@code uk_consulta_medico_horario}: linhas com {@code null}
+     * nunca colidem numa constraint UNIQUE.
+     */
+    @Column(name = "horario_ocupado")
+    private LocalDateTime horarioOcupado;
+
+    /**
      * Incrementada a cada alteracao e copiada para o evento. E o que permite aos consumidores
      * descartarem uma reentrega antiga sem sobrescrever um estado mais novo.
      */
@@ -73,11 +81,17 @@ public class Consulta {
         final LocalDateTime agora = LocalDateTime.now();
         this.criadoEm = agora;
         this.atualizadoEm = agora;
+        atualizarHorarioOcupado();
     }
 
     @PreUpdate
     void aoAtualizar() {
         this.atualizadoEm = LocalDateTime.now();
+        atualizarHorarioOcupado();
+    }
+
+    private void atualizarHorarioOcupado() {
+        this.horarioOcupado = estaCancelada() ? null : dataHora;
     }
 
     /** Alteracao parcial: campo nulo significa "nao mexer", nao "apagar". */

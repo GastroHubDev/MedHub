@@ -10,6 +10,7 @@ import br.com.fiap.agendamento.exception.RegraDeNegocioException;
 import br.com.fiap.agendamento.repository.ConsultaRepository;
 import br.com.fiap.agendamento.repository.MedicoRepository;
 import br.com.fiap.agendamento.repository.PacienteRepository;
+import br.com.fiap.comum.evento.StatusConsulta;
 import br.com.fiap.comum.evento.TipoEvento;
 import br.com.fiap.comum.seguranca.ContextoSeguranca;
 import java.time.LocalDateTime;
@@ -20,9 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Regras de agendamento e de posse.
  *
- * <p>A autorizacao acontece em dois niveis: o controller barra por perfil com
- * {@code @PreAuthorize} (quem pode chamar), e este servico barra por posse (sobre quais dados),
- * porque essa decisao depende do registro e nao apenas do papel.</p>
+ * <p>
+ * A autorizacao acontece em dois niveis: o controller barra por perfil com
+ * {@code @PreAuthorize} (quem pode chamar), e este servico barra por posse
+ * (sobre quais dados),
+ * porque essa decisao depende do registro e nao apenas do papel.
+ * </p>
  */
 @Service
 public class ConsultaService {
@@ -34,10 +38,10 @@ public class ConsultaService {
     private final RegistradorDeEventos registradorDeEventos;
 
     public ConsultaService(ConsultaRepository consultaRepository,
-                           PacienteRepository pacienteRepository,
-                           MedicoRepository medicoRepository,
-                           ContextoSeguranca contextoSeguranca,
-                           RegistradorDeEventos registradorDeEventos) {
+            PacienteRepository pacienteRepository,
+            MedicoRepository medicoRepository,
+            ContextoSeguranca contextoSeguranca,
+            RegistradorDeEventos registradorDeEventos) {
         this.consultaRepository = consultaRepository;
         this.pacienteRepository = pacienteRepository;
         this.medicoRepository = medicoRepository;
@@ -78,7 +82,8 @@ public class ConsultaService {
                 .orElseThrow(() -> new RecursoNaoEncontradoException(
                         "Medico %d nao encontrado".formatted(requisicao.medicoId())));
 
-        if (consultaRepository.existsByMedicoIdAndDataHora(medico.getId(), requisicao.dataHora())) {
+        if (consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                medico.getId(), requisicao.dataHora(), StatusConsulta.CANCELADA)) {
             throw new RegraDeNegocioException(
                     "O medico ja possui uma consulta agendada para este horario");
         }
@@ -100,15 +105,25 @@ public class ConsultaService {
         }
         if (requisicao.dataHora() != null) {
             validarDataFutura(requisicao.dataHora());
-            if (consultaRepository.existsByMedicoIdAndDataHoraAndIdNot(
-                    consulta.getMedico().getId(), requisicao.dataHora(), consulta.getId())) {
+            if (consultaRepository.existsByMedicoIdAndDataHoraAndIdNotAndStatusNot(
+                    consulta.getMedico().getId(), requisicao.dataHora(), consulta.getId(),
+                    StatusConsulta.CANCELADA)) {
                 throw new RegraDeNegocioException(
                         "O medico ja possui uma consulta agendada para este horario");
             }
         }
+        if (requisicao.status() == StatusConsulta.REALIZADA) {
+            final LocalDateTime dataEfetiva = requisicao.dataHora() != null
+                    ? requisicao.dataHora()
+                    : consulta.getDataHora();
+            validarJaAconteceu(dataEfetiva);
+        }
 
         consulta.alterar(requisicao.dataHora(), requisicao.status(), requisicao.observacoes());
-        registradorDeEventos.registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
+        final TipoEvento tipoEvento = consulta.estaCancelada()
+                ? TipoEvento.CONSULTA_CANCELADA
+                : TipoEvento.CONSULTA_ATUALIZADA;
+        registradorDeEventos.registrar(consulta, tipoEvento);
         return consulta;
     }
 
@@ -134,6 +149,13 @@ public class ConsultaService {
     private static void validarDataFutura(LocalDateTime dataHora) {
         if (dataHora.isBefore(LocalDateTime.now())) {
             throw new RegraDeNegocioException("Nao e possivel agendar consulta em data passada");
+        }
+    }
+
+    private static void validarJaAconteceu(LocalDateTime dataHora) {
+        if (dataHora.isAfter(LocalDateTime.now())) {
+            throw new RegraDeNegocioException(
+                    "Nao e possivel marcar como realizada uma consulta que ainda nao aconteceu");
         }
     }
 }
