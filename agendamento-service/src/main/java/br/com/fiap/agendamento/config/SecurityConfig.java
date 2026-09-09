@@ -1,16 +1,15 @@
 package br.com.fiap.agendamento.config;
 
 import br.com.fiap.comum.seguranca.ContextoSeguranca;
+import br.com.fiap.comum.seguranca.JsonAccessDeniedHandler;
+import br.com.fiap.comum.seguranca.JsonAuthenticationEntryPoint;
 import br.com.fiap.comum.seguranca.JwtAuthenticationFilter;
 import br.com.fiap.comum.seguranca.JwtProperties;
 import br.com.fiap.comum.seguranca.TokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.servlet.http.HttpServletResponse;
-import java.util.Map;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -70,21 +69,9 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(tratamento -> tratamento
-                        .authenticationEntryPoint((req, res, ex) ->
-                                escrever(res, objectMapper, HttpServletResponse.SC_UNAUTHORIZED,
-                                        "Token ausente ou invalido"))
-                        .accessDeniedHandler((req, res, ex) ->
-                                escrever(res, objectMapper, HttpServletResponse.SC_FORBIDDEN,
-                                        "Acesso negado para o perfil autenticado")))
+                        .authenticationEntryPoint(new JsonAuthenticationEntryPoint(objectMapper))
+                        .accessDeniedHandler(new JsonAccessDeniedHandler(objectMapper)))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();
-    }
-
-    private static void escrever(HttpServletResponse resposta, ObjectMapper objectMapper,
-                                 int status, String mensagem) throws java.io.IOException {
-        resposta.setStatus(status);
-        resposta.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        resposta.setCharacterEncoding("UTF-8");
-        objectMapper.writeValue(resposta.getWriter(), Map.of("status", status, "erro", mensagem));
     }
 }

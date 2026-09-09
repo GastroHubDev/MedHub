@@ -94,7 +94,8 @@ class ConsultaServiceTest {
 
             when(pacienteRepository.findById(ID_PACIENTE)).thenReturn(Optional.of(paciente));
             when(medicoRepository.findById(ID_MEDICO)).thenReturn(Optional.of(medico));
-            when(consultaRepository.existsByMedicoIdAndDataHora(ID_MEDICO, amanha)).thenReturn(false);
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                    ID_MEDICO, amanha, StatusConsulta.CANCELADA)).thenReturn(false);
             when(consultaRepository.save(any(Consulta.class))).thenAnswer(i -> i.getArgument(0));
 
             final Consulta criada = consultaService.criar(requisicao);
@@ -125,7 +126,8 @@ class ConsultaServiceTest {
 
             when(pacienteRepository.findById(ID_PACIENTE)).thenReturn(Optional.of(paciente));
             when(medicoRepository.findById(ID_MEDICO)).thenReturn(Optional.of(medico));
-            when(consultaRepository.existsByMedicoIdAndDataHora(ID_MEDICO, amanha)).thenReturn(true);
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndStatusNot(
+                    ID_MEDICO, amanha, StatusConsulta.CANCELADA)).thenReturn(true);
 
             assertThatThrownBy(() -> consultaService.criar(requisicao))
                     .isInstanceOf(RegraDeNegocioException.class)
@@ -151,7 +153,9 @@ class ConsultaServiceTest {
 
         @Test
         void deveIncrementarVersaoERegistrarEventoDeAtualizacao() {
-            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
+            // Data no passado de proposito: marcar como REALIZADA so e valido para uma consulta
+            // que ja aconteceu.
+            final Consulta consulta = consultaExistente(LocalDateTime.now().minusHours(1));
             when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
 
             final Consulta atualizada = consultaService.atualizar(ID_CONSULTA,
@@ -161,6 +165,31 @@ class ConsultaServiceTest {
             assertThat(atualizada.getObservacoes()).isEqualTo("Paciente compareceu");
             assertThat(atualizada.getVersao()).isEqualTo(2L);
             verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
+        }
+
+        @Test
+        void deveRecusarMarcarComoRealizadaUmaConsultaQueAindaNaoAconteceu() {
+            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
+            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
+
+            assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,
+                    new AtualizarConsultaRequest(null, StatusConsulta.REALIZADA, null)))
+                    .isInstanceOf(RegraDeNegocioException.class)
+                    .hasMessageContaining("ainda nao aconteceu");
+
+            verify(registradorDeEventos, never()).registrar(any(), any());
+        }
+
+        @Test
+        void deveRecusarMarcarComoRealizadaAoRemarcarParaDataFutura() {
+            final Consulta consulta = consultaExistente(LocalDateTime.now().minusDays(1));
+            final LocalDateTime novaDataFutura = LocalDateTime.now().plusDays(3);
+            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
+
+            assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,
+                    new AtualizarConsultaRequest(novaDataFutura, StatusConsulta.REALIZADA, null)))
+                    .isInstanceOf(RegraDeNegocioException.class)
+                    .hasMessageContaining("ainda nao aconteceu");
         }
 
         @Test
@@ -192,11 +221,25 @@ class ConsultaServiceTest {
         }
 
         @Test
+        void deveRegistrarEventoDeCancelamentoQuandoAtualizacaoMudaStatusParaCancelada() {
+            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
+            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
+
+            final Consulta atualizada = consultaService.atualizar(ID_CONSULTA,
+                    new AtualizarConsultaRequest(null, StatusConsulta.CANCELADA, null));
+
+            assertThat(atualizada.getStatus()).isEqualTo(StatusConsulta.CANCELADA);
+            verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_CANCELADA);
+            verify(registradorDeEventos, never()).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
+        }
+
+        @Test
         void deveRecusarRemarcacaoParaHorarioJaOcupadoPeloMesmoMedico() {
             final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
             final LocalDateTime novoHorario = LocalDateTime.now().plusDays(5);
             when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
-            when(consultaRepository.existsByMedicoIdAndDataHoraAndIdNot(ID_MEDICO, novoHorario, ID_CONSULTA))
+            when(consultaRepository.existsByMedicoIdAndDataHoraAndIdNotAndStatusNot(
+                    ID_MEDICO, novoHorario, ID_CONSULTA, StatusConsulta.CANCELADA))
                     .thenReturn(true);
 
             assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,

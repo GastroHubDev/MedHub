@@ -140,9 +140,9 @@ class SegurancaFluxoIntegrationTest {
                         .header("Authorization", bearer(tokenMedico))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"status": "REALIZADA", "observacoes": "Paciente compareceu"}"""))
+                                {"observacoes": "Reagendamento confirmado por telefone"}"""))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("REALIZADA"))
+                .andExpect(jsonPath("$.observacoes").value("Reagendamento confirmado por telefone"))
                 .andExpect(jsonPath("$.versao").value(2));
     }
 
