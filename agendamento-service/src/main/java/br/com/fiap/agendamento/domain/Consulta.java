@@ -53,8 +53,9 @@ public class Consulta {
     private LocalDateTime horarioOcupado;
 
     /**
-     * Incrementada a cada alteracao e copiada para o evento. E o que permite aos consumidores
-     * descartarem uma reentrega antiga sem sobrescrever um estado mais novo.
+     * Incrementada pelo Hibernate a cada alteracao e copiada para o evento. E o que permite aos
+     * consumidores descartarem uma reentrega antiga sem sobrescrever um estado mais novo - e,
+     * por ser {@code @Version}, tambem barra duas edicoes concorrentes da mesma consulta.
      */
     @Version
     @Column(nullable = false)
@@ -107,7 +108,6 @@ public class Consulta {
         if (novasObservacoes != null) {
             this.observacoes = novasObservacoes;
         }
-        this.versao++;
     }
 
     public boolean estaCancelada() {

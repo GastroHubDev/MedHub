@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -153,7 +155,7 @@ class ConsultaServiceTest {
     class AoAtualizar {
 
         @Test
-        void deveIncrementarVersaoERegistrarEventoDeAtualizacao() {
+        void deveGravarAntesDeRegistrarEventoDeAtualizacao() {
             // Data no passado de proposito: marcar como REALIZADA so e valido para uma consulta
             // que ja aconteceu.
             final Consulta consulta = consultaExistente(LocalDateTime.now().minusHours(1));
@@ -164,8 +166,10 @@ class ConsultaServiceTest {
 
             assertThat(atualizada.getStatus()).isEqualTo(StatusConsulta.REALIZADA);
             assertThat(atualizada.getObservacoes()).isEqualTo("Paciente compareceu");
-            assertThat(atualizada.getVersao()).isEqualTo(2L);
-            verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
+            // A versao e incrementada pelo Hibernate no flush, que precisa vir antes do evento.
+            final InOrder ordem = inOrder(consultaRepository, registradorDeEventos);
+            ordem.verify(consultaRepository).saveAndFlush(consulta);
+            ordem.verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
         }
 
         @Test
@@ -261,7 +265,6 @@ class ConsultaServiceTest {
                     new AtualizarConsultaRequest(null, StatusConsulta.CANCELADA, null));
 
             assertThat(atualizada.getStatus()).isEqualTo(StatusConsulta.CANCELADA);
-            assertThat(atualizada.getVersao()).isEqualTo(2L);
             verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_CANCELADA);
             verify(registradorDeEventos, never()).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
         }

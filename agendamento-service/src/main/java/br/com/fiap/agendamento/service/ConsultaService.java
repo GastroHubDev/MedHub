@@ -130,6 +130,9 @@ public class ConsultaService {
         }
 
         consulta.alterar(requisicao.dataHora(), requisicao.status(), requisicao.observacoes());
+        // O Hibernate so incrementa a versao no flush; sem ele o evento sairia com a versao
+        // anterior e os consumidores o descartariam como reentrega.
+        consultaRepository.saveAndFlush(consulta);
         final TipoEvento tipoEvento = consulta.estaCancelada()
                 ? TipoEvento.CONSULTA_CANCELADA
                 : TipoEvento.CONSULTA_ATUALIZADA;
