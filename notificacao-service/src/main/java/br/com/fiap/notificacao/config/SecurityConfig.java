@@ -6,6 +6,7 @@ import br.com.fiap.comum.seguranca.JwtAuthenticationFilter;
 import br.com.fiap.comum.seguranca.JwtProperties;
 import br.com.fiap.comum.seguranca.TokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.DispatcherType;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -41,6 +42,11 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(rotas -> rotas
+                        // O 404 de rota nao mapeada chega aqui como um dispatch para /error, e o
+                        // SecurityContext ja foi limpo: sem liberar o ERROR o forward e barrado e o
+                        // cliente recebe 401 no lugar do 404. Nao afrouxa nada - o dispatch original
+                        // continua passando pelas regras abaixo.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(tratamento -> tratamento
