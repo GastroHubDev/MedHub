@@ -320,6 +320,7 @@ Outras queries: `minhasConsultas`, `consultasFuturas`, `consultaHistorico(consul
 | Perfil sem permissão, ou dado de outro paciente | `403` | `FORBIDDEN` |
 | Registro inexistente | `404` | `NOT_FOUND` |
 | Regra de negócio ou filtro inválido | `400` | `BAD_REQUEST` |
+| Edição concorrente da mesma consulta | `409` | — (GraphQL é só leitura) |
 
 GraphQL responde **HTTP 200 mesmo em erro** — daí a distinção viver em `classification`.
 
@@ -392,6 +393,9 @@ Cada consulta carrega uma `versao` que incrementa a cada alteração e viaja no 
 consumidores usam o **id da consulta de origem como chave primária** da sua projeção e
 descartam evento cuja versão seja menor ou igual à já aplicada. Reentrega do broker ou evento
 fora de ordem não corrompem o estado.
+
+Na origem, a `versao` é um `@Version` do JPA: quem a incrementa é o Hibernate, e duas
+edições simultâneas da mesma consulta não se sobrescrevem — a segunda recebe `409`.
 
 No histórico, isso é feito em duas gravações separadas: a **trilha** (`evento_consulta`,
 append-only) registra tudo o que chegou, inclusive o que chegou atrasado; o **estado atual**

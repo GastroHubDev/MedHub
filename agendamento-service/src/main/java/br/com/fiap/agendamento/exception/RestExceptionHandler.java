@@ -1,6 +1,7 @@
 package br.com.fiap.agendamento.exception;
 
 import java.net.URI;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
@@ -31,6 +32,13 @@ public class RestExceptionHandler {
                 .reduce((a, b) -> a + "; " + b)
                 .orElse("Requisicao invalida");
         return montar(HttpStatus.BAD_REQUEST, "Falha de validacao", detalhe);
+    }
+
+    /** Duas edicoes simultaneas da mesma consulta: a {@code @Version} barra a segunda. */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ProblemDetail edicaoConcorrente(OptimisticLockingFailureException e) {
+        return montar(HttpStatus.CONFLICT, "Edicao concorrente",
+                "A consulta foi alterada por outra requisicao; recarregue e tente novamente");
     }
 
     @ExceptionHandler(AccessDeniedException.class)
