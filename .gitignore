@@ -43,3 +43,7 @@ bin/
 # junto com o override do compose que o sobe ao lado dos servicos.
 frontend/
 docker-compose.override.yml
+
+### Script de validacao manual local ###
+# Escreve na massa da seed e vale para uma execucao por ambiente - nao faz parte da entrega.
+validar.sh
