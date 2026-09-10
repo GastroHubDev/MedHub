@@ -121,17 +121,16 @@ que Kafka e Postgres passam no healthcheck.
 > `8025` são disputadas por outros projetos que costumam conviver na mesma máquina. Todas são
 > sobrescrevíveis por variável de ambiente — copie `.env.example` para `.env` e ajuste, ou passe
 > na linha de comando: `PORTA_AGENDAMENTO=8280 docker compose up`. As portas **internas** dos
-> containers (8080, 8081, 8082, 5432…) não mudam: são elas que valem para o front, para os
-> upstreams do nginx e para a comunicação entre os serviços.
+> containers (8080, 8081, 8082, 5432…) não mudam: são elas que valem para a comunicação entre
+> os serviços.
 
 | O quê | Onde |
 |---|---|
-| **Console de testes (front)** | **http://localhost:3030** |
-| Swagger (API de agendamento) | http://localhost:8180/swagger-ui.html |
+| **Swagger (API de agendamento)** | **http://localhost:8180/swagger-ui.html** |
 | GraphiQL (histórico) | http://localhost:8182/graphiql |
 | Kafka UI — tópicos, mensagens e lag | http://localhost:8190 |
 | MailHog — caixa de entrada | http://localhost:8125 |
-| Health checks | `:8080` `:8081` `:8082` + `/actuator/health` |
+| Health checks | http://localhost:8180/actuator/health (idem `:8181` e `:8182`) |
 
 ### Rodando os testes
 
@@ -155,58 +154,6 @@ Acompanhe as mensagens chegando em http://localhost:8125.
 
 ---
 
-## Console de testes (front)
-
-`http://localhost:3030` — uma página estática servida por nginx, sem build, sem npm e sem CDN.
-Existe para validar o backend inteiro pelo browser, com foco nos **três níveis de acesso**.
-
-O que ela faz de diferente de um app comum: mantém **os três perfis logados ao mesmo tempo** e
-dispara a mesma requisição com os três tokens, lado a lado. A única diferença entre as colunas é
-a permissão de cada perfil.
-
-| Aba | Para quê |
-|---|---|
-| **Painel** | Saúde dos 3 serviços e o **fluxo ponta a ponta**: registra uma consulta, mede o tempo real que o evento leva para atravessar o Kafka e mostra o efeito nos dois consumidores |
-| **Agendamento** | REST de escrita — registrar, listar, editar e cancelar, com o interruptor *executar nos 3 perfis* |
-| **Histórico (GraphQL)** | As 5 queries com variáveis editáveis; a trilha `eventos` sai renderizada como linha do tempo |
-| **Notificações** | A trilha do `notificacao-service` — a prova de que o evento virou e-mail |
-| **Matriz de permissões** | Dispara ~48 verificações reais e compara com o esperado pelo enunciado |
-| **Console HTTP** | Toda requisição da página, com corpo de ida e volta, perfil, status e tempo; copia como `curl` |
-
-### Por que nginx com proxy reverso
-
-Os três serviços **não têm configuração de CORS** — e não precisam ter. O nginx serve o front e
-encaminha as chamadas, então para o browser tudo vem da mesma origem (`localhost:3030`):
-
-```
-/                      arquivos estáticos
-/api/agendamento/*  -> agendamento-service:8080/api/*
-/api/notificacao/*  -> notificacao-service:8081/api/*
-/graphql            -> historico-service:8082/graphql
-/health/{servico}   -> <servico>/actuator/health
-```
-
-Nenhuma requisição cross-origin acontece, e **nenhuma linha do código Java precisou mudar** para
-o front existir.
-
-### A matriz de permissões
-
-É a aba que responde diretamente a "ver a visão dos 3 tipos de acesso". Cada célula **dispara a
-requisição de verdade** e compara o resultado com o previsto pelo enunciado — verde é
-conformidade, vermelho é divergência real. Dois cuidados a destacar:
-
-- Os cenários de escrita usam uma **consulta descartável** criada na hora, então rodar a matriz
-  não altera as consultas 1–4 da seed e o resultado é o mesmo em toda execução.
-- Cada perfil agenda em um **horário próprio**: horários iguais esbarrariam no índice único
-  `uk_consulta_medico_horario` e devolveriam `400` (double-booking) no lugar do `201`/`403`
-  esperado — um falso negativo.
-
-Para o GraphQL, a comparação é feita sobre `errors[0].extensions.classification` e não sobre o
-status HTTP, porque o protocolo responde **200 mesmo ao negar acesso**. A matriz mostra
-`200 (FORBIDDEN)` nesses casos.
-
----
-
 ## Usuários e permissões
 
 Todos com a senha **`senha123`** (hashes BCrypt na migração `V2`).
@@ -224,27 +171,57 @@ Todos com a senha **`senha123`** (hashes BCrypt na migração `V2`).
 | Ação | MEDICO | ENFERMEIRO | PACIENTE | Trecho do enunciado |
 |---|:--:|:--:|:--:|---|
 | `POST /api/auth/login` | ✅ | ✅ | ✅ | "autenticação com Spring Security" |
-| `POST /api/consultas` | ✅ | ✅ | ❌ | "Enfermeiros: podem **registrar consultas**" |
-| `PUT /api/consultas/{id}` | ✅ | ❌ | ❌ | "Médicos: podem visualizar e **editar** o histórico de consultas" |
-| `POST /api/consultas/{id}/cancelar` | ✅ | ❌ | ❌ | idem |
+| `POST /api/consultas` | ✅ | ✅ | ❌ | "médicos e enfermeiros poderão **registrar novas consultas**" |
+| `PUT /api/consultas/{id}` — data, observações | ✅ | ✅ | ❌ | "…e **modificar consultas existentes**" |
+| `PUT` com `status: CANCELADA` | ✅ | ✅ | ❌ | cancelamento é uma alteração de status, não uma rota própria |
+| `PUT` com `status: REALIZADA` | ✅ | ❌ | ❌ | "Médicos: podem visualizar e **editar o histórico** de consultas" |
 | `GET /api/consultas` | ✅ todas | ✅ todas | ✅ **só as suas** | "Pacientes: podem visualizar **apenas as suas** consultas" |
 | GraphQL `historicoPaciente` | ✅ qualquer | ✅ qualquer | ✅ só o próprio | "Enfermeiros: ... e **acessar o histórico**" |
 | GraphQL `minhasConsultas` · `consultasFuturas` | ✅ | ✅ | ✅ só as suas | "consultas flexíveis sobre o histórico médico" |
 | `GET /api/notificacoes` | ✅ | ✅ | ❌ | visão operacional da equipe clínica |
 
 **Sobre "médicos podem editar o histórico":** o `historico-service` é **estritamente somente
-leitura** — não tem `type Mutation`. A edição do médico acontece no `PUT /api/consultas/{id}`,
+leitura** — não tem `type Mutation`. A edição acontece no `PUT /api/consultas/{id}`,
 único lado de escrita do sistema, e se propaga ao histórico pelo evento `CONSULTA_ATUALIZADA`.
 A trilha `eventos` na resposta GraphQL é a evidência visível de que a edição chegou lá. Isso
 preserva a separação CQRS e mantém o read model derivado 100% do log.
 
+**Sobre enfermeiros editarem — a leitura que adotamos.** À primeira vista o enunciado se
+contradiz: a seção 1 dá ao enfermeiro apenas "registrar consultas e acessar o histórico",
+enquanto a seção 2 diz que "médicos **e enfermeiros** poderão registrar novas consultas e
+**modificar consultas existentes**". As duas frases falam de **objetos diferentes**:
+
+| Seção | Texto | Objeto |
+|---|---|---|
+| 1 — Níveis de acesso | "Médicos: visualizar e editar **o histórico de consultas**" | o **prontuário** |
+| 2 — GraphQL | "médicos e enfermeiros poderão … modificar **consultas existentes**" | a **agenda** |
+| 3 — Separação | "Serviço de Agendamento: responsável pela criação e edição **das consultas**" | a **agenda** |
+
+Lido assim não há contradição, e a divisão é a de um hospital de verdade: **enfermeiro mexe na
+agenda, médico mexe no prontuário**. Foi o que implementamos — e como a fronteira está no
+_campo_, não na rota, ela vive no `ConsultaService` e não num `@PreAuthorize`:
+
+- **Agenda** — remarcar `dataHora`, ajustar `observacoes`, cancelar → médico **e** enfermeiro
+- **Prontuário** — marcar `status: REALIZADA`, o ato de atestar que o atendimento aconteceu →
+  **só médico** (`403` para o enfermeiro)
+
+Assim os **três níveis continuam distintos**, e as duas frases do enunciado são atendidas ao
+mesmo tempo em vez de uma ser escolhida em detrimento da outra.
+
+**Sobre não existir `POST /{id}/cancelar`:** cancelar é `PUT` com `status: CANCELADA`. Uma rota
+dedicada seria um segundo caminho para o mesmo efeito, com as mesmas regras (não cancelar duas
+vezes, publicar `CONSULTA_CANCELADA` em vez de `CONSULTA_ATUALIZADA`) escritas duas vezes.
+
 ### Como a autorização é aplicada
 
-Em **dois níveis**, porque as duas perguntas são diferentes:
+Em **três níveis**, porque são três perguntas diferentes:
 
 - **Por papel** — `@PreAuthorize` no controller/resolver responde *"quem pode chamar isto?"*.
-- **Por posse** — `ContextoSeguranca` na camada de serviço responde *"sobre quais dados?"*,
-  decisão que depende do registro e não só do perfil.
+- **Por posse** — `ContextoSeguranca.exigirPosse` na camada de serviço responde *"sobre quais
+  dados?"*, decisão que depende do registro e não só do perfil.
+- **Por campo** — `ContextoSeguranca.exigirMedico` responde *"que parte deste recurso?"*: o
+  `PUT` é o mesmo para os dois perfis clínicos, mas `status: REALIZADA` só o médico envia.
+  Nenhum `@PreAuthorize` daria conta disso, porque a rota é a mesma.
 
 Um paciente que pede o histórico de outro recebe **403 explícito**, nunca uma reescrita
 silenciosa para o próprio id — reescrever mascararia a tentativa de acesso indevido.
@@ -283,6 +260,34 @@ TOKEN=$(curl -s -X POST http://localhost:8180/api/auth/login \
 curl -X POST http://localhost:8180/api/consultas \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"pacienteId":4,"medicoId":1,"dataHora":"2026-10-15T09:00:00","observacoes":"Retorno"}'
+```
+
+Modificar é `PUT` com alteração parcial — campo ausente significa "manter como está":
+
+```bash
+curl -X PUT http://localhost:8180/api/consultas/2 \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"dataHora":"2026-10-16T14:00:00","observacoes":"Remarcada a pedido do paciente"}'
+```
+
+Cancelar é o mesmo `PUT`, mudando o status. Não há rota dedicada:
+
+```bash
+curl -X PUT http://localhost:8180/api/consultas/2 \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"CANCELADA"}'
+```
+
+O evento publicado é `CONSULTA_CANCELADA` (e não `CONSULTA_ATUALIZADA`), o que faz o
+`notificacao-service` avisar o paciente e parar de enviar lembretes.
+
+Já `status: REALIZADA` é ato de prontuário e exige o perfil `MEDICO` — o mesmo `PUT` com o
+token do enfermeiro responde `403`. Só é aceito para uma consulta que já aconteceu:
+
+```bash
+curl -X PUT http://localhost:8180/api/consultas/1 \
+  -H "Authorization: Bearer $TOKEN_MEDICO" -H 'Content-Type: application/json' \
+  -d '{"status":"REALIZADA","observacoes":"Paciente compareceu"}'
 ```
 
 ### Consultar o histórico (GraphQL)
@@ -483,14 +488,15 @@ Relatório de cobertura JaCoCo em `<módulo>/target/site/jacoco/index.html` apó
 
 ## Collection Postman
 
-`postman/tech-challenge-kafka.postman_collection.json` — 34 requisições em 6 pastas,
+`postman/tech-challenge-kafka.postman_collection.json` — 47 requisições em 6 pastas,
 **todas com asserções `pm.test`**. Os tokens são capturados automaticamente no login.
 
 1. **Autenticação** — os quatro perfis + credenciais inválidas
-2. **Agendamento (REST)** — registrar, listar, editar, cancelar
+2. **Agendamento (REST)** — registrar, listar, editar, cancelar e marcar como realizada
 3. **Histórico (GraphQL)** — queries flexíveis e a trilha de eventos
-4. **Acesso negado** — 401/403 no REST, `UNAUTHORIZED`/`FORBIDDEN`/`NOT_FOUND` no GraphQL
-5. **Validações de domínio** — passado, double-booking, campos obrigatórios
+4. **Acesso negado** — 401/403 no REST (inclusive a fronteira agenda × prontuário),
+   `UNAUTHORIZED`/`FORBIDDEN`/`NOT_FOUND` no GraphQL
+5. **Validações de domínio** — passado, double-booking, campos obrigatórios, filtros inválidos
 6. **Notificações** — comprova que o evento Kafka produziu a notificação
 
 Importe também `tech-challenge-kafka.postman_environment.json` e rode a collection inteira no
@@ -510,9 +516,6 @@ tech-challenge-kafka/
 ├── agendamento-service/          :8080 REST, Security, outbox, producer
 ├── notificacao-service/          :8081 consumer, projeção, lembretes, SMTP
 ├── historico-service/            :8082 consumer, read model, GraphQL
-├── frontend/                     :3030 console de testes (HTML/JS puro + nginx)
-│   ├── nginx.conf                proxy reverso: front e APIs na mesma origem
-│   └── app/                      index.html, styles.css e js/ (api, sessoes, graphql, cenarios, app)
 ├── docker/postgres/init.sql      cria as três bases
 ├── postman/                      collection + environment
 ├── docker-compose.yml

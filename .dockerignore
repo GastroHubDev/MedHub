@@ -8,7 +8,8 @@ docs/
 postman/
 README.md
 docker-compose.yml
+docker-compose.override.yml
 
-# O front tem contexto de build proprio (./frontend); os tres servicos Java nao precisam
-# dele no contexto deles.
+# Console de testes local (nao versionado): tem contexto de build proprio e nao pertence ao
+# contexto dos tres servicos Java.
 frontend/

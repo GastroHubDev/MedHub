@@ -37,3 +37,9 @@ bin/
 
 ### Variaveis locais (o .env.example fica versionado) ###
 .env
+
+### Console de testes local ###
+# O front nao faz parte da entrega - o enunciado pede um backend. Ele vive so nesta maquina,
+# junto com o override do compose que o sobe ao lado dos servicos.
+frontend/
+docker-compose.override.yml
