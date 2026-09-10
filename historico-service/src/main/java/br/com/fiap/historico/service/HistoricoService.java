@@ -37,7 +37,8 @@ public class HistoricoService {
 
     public HistoricoPacienteResponse historicoPaciente(Long pacienteIdSolicitado,
                                                        FiltroHistorico filtro) {
-        final Long pacienteAlvo = contextoSeguranca.resolverPacienteAlvo(pacienteIdSolicitado);
+        final Long pacienteAlvo = exigirPacienteAlvo(pacienteIdSolicitado,
+                "Informe o pacienteId para consultar o historico");
         return HistoricoPacienteResponse.de(pacienteAlvo, buscar(pacienteAlvo, filtro));
     }
 
@@ -64,11 +65,8 @@ public class HistoricoService {
     }
 
     public EstatisticasPacienteResponse estatisticas(Long pacienteIdSolicitado) {
-        final Long pacienteAlvo = contextoSeguranca.resolverPacienteAlvo(pacienteIdSolicitado);
-        if (pacienteAlvo == null) {
-            throw new FiltroInvalidoException(
-                    "Informe o pacienteId para calcular as estatisticas");
-        }
+        final Long pacienteAlvo = exigirPacienteAlvo(pacienteIdSolicitado,
+                "Informe o pacienteId para calcular as estatisticas");
 
         return new EstatisticasPacienteResponse(
                 pacienteAlvo,
@@ -78,6 +76,22 @@ public class HistoricoService {
                 consultaRepository.countByPacienteIdAndStatus(pacienteAlvo, StatusConsulta.CANCELADA),
                 consultaRepository.countByPacienteIdAndStatusAndDataHoraGreaterThanEqual(
                         pacienteAlvo, StatusConsulta.AGENDADA, LocalDateTime.now()));
+    }
+
+    /**
+     * Resolve a posse e recusa a consulta que nao tem paciente algum.
+     *
+     * <p>Um paciente sempre cai no proprio id; medico e enfermeiro precisam dizer de quem e o
+     * historico. Sem essa guarda o {@code pacienteId} da resposta sairia nulo e o GraphQL
+     * quebraria com {@code NonNullableFieldWasNullError} - um erro de schema no lugar da
+     * mensagem que explica o que faltou.</p>
+     */
+    private Long exigirPacienteAlvo(Long pacienteIdSolicitado, String mensagem) {
+        final Long pacienteAlvo = contextoSeguranca.resolverPacienteAlvo(pacienteIdSolicitado);
+        if (pacienteAlvo == null) {
+            throw new FiltroInvalidoException(mensagem);
+        }
+        return pacienteAlvo;
     }
 
     private List<ConsultaHistorico> buscar(Long pacienteId, FiltroHistorico filtro) {

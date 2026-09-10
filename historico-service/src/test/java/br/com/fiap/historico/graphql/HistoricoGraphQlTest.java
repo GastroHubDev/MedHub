@@ -208,6 +208,26 @@ class HistoricoGraphQlTest {
                     .errors()
                     .expect(erro -> erro.getErrorType() == ErrorType.NOT_FOUND);
         }
+
+        /**
+         * Quem nao e paciente precisa dizer de quem e o historico. Sem essa guarda a resposta
+         * sairia com pacienteId nulo e o GraphQL quebraria com NonNullableFieldWasNullError.
+         */
+        @Test
+        void deveRecusarHistoricoSemPacienteId() {
+            tester.document("query { historicoPaciente { pacienteId totalConsultas } }")
+                    .execute()
+                    .errors()
+                    .expect(erro -> erro.getErrorType() == ErrorType.BAD_REQUEST);
+        }
+
+        @Test
+        void deveRecusarEstatisticasSemPacienteId() {
+            tester.document("query { estatisticasPaciente { total } }")
+                    .execute()
+                    .errors()
+                    .expect(erro -> erro.getErrorType() == ErrorType.BAD_REQUEST);
+        }
     }
 
     @Nested

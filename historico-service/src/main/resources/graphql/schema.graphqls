@@ -12,6 +12,8 @@ type Query {
     Historico completo de um paciente, com totais.
     Medicos e enfermeiros podem informar qualquer pacienteId; pacientes recebem sempre o
     proprio historico, e informar o id de outro resulta em FORBIDDEN.
+    O argumento so e opcional para o perfil PACIENTE: quem nao e paciente precisa dizer de
+    quem e o historico, senao a resposta e BAD_REQUEST.
     """
     historicoPaciente(pacienteId: ID, filtro: FiltroHistorico): HistoricoPaciente!
 
@@ -24,7 +26,10 @@ type Query {
     "Detalhe de uma consulta, incluindo a trilha de eventos que a formou."
     consultaHistorico(consultaId: ID!): ConsultaHistorico
 
-    "Numeros consolidados do paciente."
+    """
+    Numeros consolidados do paciente. Como em historicoPaciente, o argumento so pode ser
+    omitido pelo perfil PACIENTE.
+    """
     estatisticasPaciente(pacienteId: ID): EstatisticasPaciente!
 }
 
