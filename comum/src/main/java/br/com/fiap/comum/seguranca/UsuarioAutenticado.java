@@ -42,6 +42,10 @@ public class UsuarioAutenticado implements UserDetails {
         return role == Role.PACIENTE;
     }
 
+    public boolean isMedico() {
+        return role == Role.MEDICO;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority(role.authority()));

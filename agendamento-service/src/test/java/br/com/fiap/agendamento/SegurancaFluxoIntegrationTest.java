@@ -147,9 +147,50 @@ class SegurancaFluxoIntegrationTest {
     }
 
     @Test
-    void medicoDeveCancelarConsulta() throws Exception {
-        mockMvc.perform(post("/api/consultas/3/cancelar")
-                        .header("Authorization", bearer(tokenMedico)))
+    void enfermeiroDeveEditarConsulta() throws Exception {
+        mockMvc.perform(put("/api/consultas/2")
+                        .header("Authorization", bearer(tokenEnfermeiro))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"observacoes": "Paciente remarcou pelo balcao"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.observacoes").value("Paciente remarcou pelo balcao"))
+                .andExpect(jsonPath("$.versao").value(2));
+    }
+
+    /**
+     * A fronteira entre os dois perfis: agenda os dois mexem, prontuario so o medico.
+     * A consulta 1 e a unica da massa que ja aconteceu.
+     */
+    @Test
+    void medicoDeveMarcarConsultaComoRealizada() throws Exception {
+        mockMvc.perform(put("/api/consultas/1")
+                        .header("Authorization", bearer(tokenMedico))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "REALIZADA", "observacoes": "Paciente compareceu"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REALIZADA"));
+    }
+
+    @Test
+    void enfermeiroNaoDeveMarcarConsultaComoRealizada() throws Exception {
+        mockMvc.perform(put("/api/consultas/1")
+                        .header("Authorization", bearer(tokenEnfermeiro))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "REALIZADA"}"""))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Cancelar e uma edicao de status: nao ha rota dedicada. */
+    @Test
+    void cancelamentoDeveSerFeitoPeloPut() throws Exception {
+        mockMvc.perform(put("/api/consultas/3")
+                        .header("Authorization", bearer(tokenMedico))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "CANCELADA"}"""))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CANCELADA"));
     }
@@ -196,12 +237,12 @@ class SegurancaFluxoIntegrationTest {
     }
 
     @Test
-    void enfermeiroNaoDeveEditarConsulta() throws Exception {
+    void pacienteNaoDeveEditarConsulta() throws Exception {
         mockMvc.perform(put("/api/consultas/2")
-                        .header("Authorization", bearer(tokenEnfermeiro))
+                        .header("Authorization", bearer(tokenPaciente))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"status": "REALIZADA"}"""))
+                                {"status": "CANCELADA"}"""))
                 .andExpect(status().isForbidden());
     }
 

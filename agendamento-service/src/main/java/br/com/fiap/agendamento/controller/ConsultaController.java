@@ -25,9 +25,18 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Lado de escrita das consultas.
  *
- * <p>Os {@code @PreAuthorize} implementam os niveis de acesso do enunciado: enfermeiros
- * registram consultas, medicos editam e cancelam, e pacientes apenas consultam - a restricao
+ * <p>Os {@code @PreAuthorize} implementam os niveis de acesso do enunciado: medicos e
+ * enfermeiros registram e modificam consultas, e pacientes apenas consultam - a restricao
  * de que so enxergam as proprias consultas e aplicada no servico.</p>
+ *
+ * <p>Um nivel a mais mora no servico, porque depende do campo e nao da rota: so o medico
+ * marca uma consulta como {@code REALIZADA}. E a separacao que o enunciado faz entre
+ * <i>modificar consultas existentes</i> (agenda, dos dois perfis) e <i>editar o historico</i>
+ * (prontuario, do medico).</p>
+ *
+ * <p>Nao existe rota dedicada de cancelamento: cancelar e uma alteracao de status como
+ * qualquer outra, feita pelo {@code PUT} com {@code status: CANCELADA}. Uma rota separada
+ * seria um segundo caminho para o mesmo efeito, com as mesmas regras duplicadas.</p>
  */
 @RestController
 @RequestMapping("/api/consultas")
@@ -85,33 +94,24 @@ public class ConsultaController {
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('MEDICO')")
+    @PreAuthorize("hasAnyRole('MEDICO','ENFERMEIRO')")
     @Operation(summary = "Edita uma consulta",
-            description = "Atende ao requisito \"medicos podem visualizar e editar o historico de "
-                    + "consultas\": a alteracao feita aqui chega ao servico de historico via evento "
-                    + "CONSULTA_ATUALIZADA. Campos nulos sao mantidos como estao.")
+            description = "Atende ao requisito \"medicos e enfermeiros poderao registrar novas "
+                    + "consultas e modificar consultas existentes\": a alteracao feita aqui chega ao "
+                    + "servico de historico via evento CONSULTA_ATUALIZADA. Campos nulos sao mantidos "
+                    + "como estao. Enviar status CANCELADA cancela a consulta e publica "
+                    + "CONSULTA_CANCELADA, fazendo o servico de notificacao parar os lembretes. "
+                    + "Marcar status REALIZADA e ato clinico e exige o perfil MEDICO - e o requisito "
+                    + "\"medicos podem visualizar e editar o historico de consultas\".")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Consulta atualizada"),
             @ApiResponse(responseCode = "400", description = "Consulta cancelada, data no passado ou horario ocupado"),
-            @ApiResponse(responseCode = "403", description = "Apenas medicos podem editar"),
+            @ApiResponse(responseCode = "403", description = "Perfil sem permissao para editar, "
+                    + "ou enfermeiro tentando marcar como REALIZADA"),
             @ApiResponse(responseCode = "404", description = "Consulta inexistente")
     })
     public ConsultaResponse atualizar(@PathVariable Long id,
                                       @Valid @RequestBody AtualizarConsultaRequest requisicao) {
         return ConsultaResponse.de(consultaService.atualizar(id, requisicao));
-    }
-
-    @PostMapping("/{id}/cancelar")
-    @PreAuthorize("hasRole('MEDICO')")
-    @Operation(summary = "Cancela uma consulta",
-            description = "Publica CONSULTA_CANCELADA; o servico de notificacao para de enviar lembretes.")
-    @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Consulta cancelada"),
-            @ApiResponse(responseCode = "400", description = "Consulta ja cancelada"),
-            @ApiResponse(responseCode = "403", description = "Apenas medicos podem cancelar"),
-            @ApiResponse(responseCode = "404", description = "Consulta inexistente")
-    })
-    public ConsultaResponse cancelar(@PathVariable Long id) {
-        return ConsultaResponse.de(consultaService.cancelar(id));
     }
 }

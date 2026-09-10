@@ -3,6 +3,7 @@ package br.com.fiap.agendamento.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -192,6 +193,37 @@ class ConsultaServiceTest {
                     .hasMessageContaining("ainda nao aconteceu");
         }
 
+        /**
+         * Remarcar e agenda; marcar como realizada e prontuario. So o segundo passa pela
+         * guarda de perfil, e e o servico que decide isso porque a diferenca esta no campo.
+         */
+        @Test
+        void remarcarNaoDeveExigirPerfilDeMedico() {
+            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
+            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
+
+            consultaService.atualizar(ID_CONSULTA,
+                    new AtualizarConsultaRequest(LocalDateTime.now().plusDays(4), null, null));
+
+            verify(contextoSeguranca, never()).exigirMedico(any());
+        }
+
+        @Test
+        void marcarComoRealizadaDeveExigirPerfilDeMedico() {
+            final Consulta consulta = consultaExistente(LocalDateTime.now().minusHours(1));
+            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
+            doThrow(new AccessDeniedException("Apenas medicos podem marcar uma consulta como realizada"))
+                    .when(contextoSeguranca).exigirMedico(any());
+
+            assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,
+                    new AtualizarConsultaRequest(null, StatusConsulta.REALIZADA, null)))
+                    .isInstanceOf(AccessDeniedException.class)
+                    .hasMessageContaining("Apenas medicos");
+
+            assertThat(consulta.getStatus()).isEqualTo(StatusConsulta.AGENDADA);
+            verify(registradorDeEventos, never()).registrar(any(), any());
+        }
+
         @Test
         void campoNuloDeveManterOValorAnterior() {
             final LocalDateTime dataOriginal = LocalDateTime.now().plusDays(2);
@@ -209,7 +241,7 @@ class ConsultaServiceTest {
         @Test
         void deveRecusarAlteracaoDeConsultaCancelada() {
             final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
-            consulta.cancelar();
+            consulta.alterar(null, StatusConsulta.CANCELADA, null);
             when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
 
             assertThatThrownBy(() -> consultaService.atualizar(ID_CONSULTA,
@@ -229,6 +261,7 @@ class ConsultaServiceTest {
                     new AtualizarConsultaRequest(null, StatusConsulta.CANCELADA, null));
 
             assertThat(atualizada.getStatus()).isEqualTo(StatusConsulta.CANCELADA);
+            assertThat(atualizada.getVersao()).isEqualTo(2L);
             verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_CANCELADA);
             verify(registradorDeEventos, never()).registrar(consulta, TipoEvento.CONSULTA_ATUALIZADA);
         }
@@ -246,33 +279,6 @@ class ConsultaServiceTest {
                     new AtualizarConsultaRequest(novoHorario, null, null)))
                     .isInstanceOf(RegraDeNegocioException.class)
                     .hasMessageContaining("ja possui uma consulta agendada");
-        }
-    }
-
-    @Nested
-    class AoCancelar {
-
-        @Test
-        void deveMarcarComoCanceladaERegistrarEvento() {
-            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
-            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
-
-            final Consulta cancelada = consultaService.cancelar(ID_CONSULTA);
-
-            assertThat(cancelada.getStatus()).isEqualTo(StatusConsulta.CANCELADA);
-            assertThat(cancelada.getVersao()).isEqualTo(2L);
-            verify(registradorDeEventos).registrar(consulta, TipoEvento.CONSULTA_CANCELADA);
-        }
-
-        @Test
-        void deveRecusarCancelamentoDuplicado() {
-            final Consulta consulta = consultaExistente(LocalDateTime.now().plusDays(2));
-            consulta.cancelar();
-            when(consultaRepository.findWithRelacoesById(ID_CONSULTA)).thenReturn(Optional.of(consulta));
-
-            assertThatThrownBy(() -> consultaService.cancelar(ID_CONSULTA))
-                    .isInstanceOf(RegraDeNegocioException.class)
-                    .hasMessageContaining("ja esta cancelada");
         }
     }
 

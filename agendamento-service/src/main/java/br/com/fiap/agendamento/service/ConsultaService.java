@@ -95,6 +95,15 @@ public class ConsultaService {
         return consulta;
     }
 
+    /**
+     * Alteracao parcial da consulta - inclusive o cancelamento, que e apenas
+     * {@code status: CANCELADA} e resulta em {@link TipoEvento#CONSULTA_CANCELADA} em vez de
+     * {@link TipoEvento#CONSULTA_ATUALIZADA}.
+     *
+     * <p>A autorizacao aqui e <b>por campo</b>: remarcar, anotar e cancelar sao mexidas na
+     * agenda e cabem a medicos e enfermeiros; marcar como {@code REALIZADA} e um ato clinico
+     * - atestar que o atendimento aconteceu - e fica so com o medico.</p>
+     */
     @Transactional
     public Consulta atualizar(Long id, AtualizarConsultaRequest requisicao) {
         final Consulta consulta = buscarOuFalhar(id);
@@ -113,6 +122,7 @@ public class ConsultaService {
             }
         }
         if (requisicao.status() == StatusConsulta.REALIZADA) {
+            contextoSeguranca.exigirMedico("marcar uma consulta como realizada");
             final LocalDateTime dataEfetiva = requisicao.dataHora() != null
                     ? requisicao.dataHora()
                     : consulta.getDataHora();
@@ -124,19 +134,6 @@ public class ConsultaService {
                 ? TipoEvento.CONSULTA_CANCELADA
                 : TipoEvento.CONSULTA_ATUALIZADA;
         registradorDeEventos.registrar(consulta, tipoEvento);
-        return consulta;
-    }
-
-    @Transactional
-    public Consulta cancelar(Long id) {
-        final Consulta consulta = buscarOuFalhar(id);
-
-        if (consulta.estaCancelada()) {
-            throw new RegraDeNegocioException("Consulta ja esta cancelada");
-        }
-
-        consulta.cancelar();
-        registradorDeEventos.registrar(consulta, TipoEvento.CONSULTA_CANCELADA);
         return consulta;
     }
 

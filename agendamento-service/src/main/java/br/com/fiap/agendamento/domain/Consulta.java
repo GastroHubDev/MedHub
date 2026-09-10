@@ -108,11 +108,6 @@ public class Consulta {
         this.versao++;
     }
 
-    public void cancelar() {
-        this.status = StatusConsulta.CANCELADA;
-        this.versao++;
-    }
-
     public boolean estaCancelada() {
         return status == StatusConsulta.CANCELADA;
     }
