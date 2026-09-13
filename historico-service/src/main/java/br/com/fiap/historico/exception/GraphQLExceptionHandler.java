@@ -16,7 +16,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>GraphQL responde HTTP 200 mesmo em erro, entao a distincao que o REST faz por status code
  * precisa aparecer em {@code errors[].extensions.classification} - e o que permite ao cliente
- * (e a collection do Postman) diferenciar "sem token" de "sem permissao".</p>
+ * (e a collection do Postman) diferenciar "sem permissao" de "nao encontrado". Requisicao sem
+ * token nem chega aqui: o Spring Security responde 401 antes do motor GraphQL.</p>
  */
 @Component
 public class GraphQLExceptionHandler extends DataFetcherExceptionResolverAdapter {

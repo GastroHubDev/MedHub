@@ -61,6 +61,7 @@ sequenceDiagram
     participant N as notificacao :8081
     participant H as historico :8082
     participant Med as Médico
+    participant Pac as Paciente
 
     E->>A: POST /api/auth/login
     A-->>E: JWT (ROLE_ENFERMEIRO)
@@ -85,7 +86,7 @@ sequenceDiagram
 
     Note over N: Diariamente às 08:00
     N->>N: LembreteScheduler varre as próximas 24h
-    N->>Med: lembrete D-1 (MailHog)
+    N->>Pac: lembrete D-1 por e-mail (MailHog)
 ```
 
 ### Serviços
@@ -115,7 +116,9 @@ docker compose up --build
 
 Um único comando: o Postgres cria as três bases, o Flyway aplica os schemas e a massa inicial,
 e o `agendamento-service` cria os tópicos do Kafka na subida. As aplicações só iniciam depois
-que Kafka e Postgres passam no healthcheck.
+que Kafka e Postgres passam no healthcheck, e os dois consumidores (`notificacao-service` e
+`historico-service`) esperam também o `agendamento-service` ficar saudável: assim o tópico já
+existe com as 3 partições quando eles se inscrevem.
 
 > **Portas.** As portas de host ficam na faixa `81xx` porque `8080`, `8081`, `5432`, `1025` e
 > `8025` são disputadas por outros projetos que costumam conviver na mesma máquina. Todas são
@@ -177,8 +180,12 @@ Todos com a senha **`senha123`** (hashes BCrypt na migração `V2`).
 | `PUT` com `status: REALIZADA` | ✅ | ❌ | ❌ | "Médicos: podem visualizar e **editar o histórico** de consultas" |
 | `GET /api/consultas` | ✅ todas | ✅ todas | ✅ **só as suas** | "Pacientes: podem visualizar **apenas as suas** consultas" |
 | GraphQL `historicoPaciente` | ✅ qualquer | ✅ qualquer | ✅ só o próprio | "Enfermeiros: ... e **acessar o histórico**" |
-| GraphQL `minhasConsultas` · `consultasFuturas` | ✅ | ✅ | ✅ só as suas | "consultas flexíveis sobre o histórico médico" |
+| GraphQL `consultasFuturas` | ✅ qualquer | ✅ qualquer | ✅ só as suas | "consultas flexíveis sobre o histórico médico" |
+| GraphQL `minhasConsultas` | ✅ ¹ | ✅ ¹ | ✅ as suas | atalho do paciente para o próprio histórico |
 | `GET /api/notificacoes` | ✅ | ✅ | ❌ | visão operacional da equipe clínica |
+
+¹ Permitido, mas devolve lista vazia: a query usa o id de quem está logado como `pacienteId`, e
+médico ou enfermeiro não são pacientes.
 
 **Sobre "médicos podem editar o histórico":** o `historico-service` é **estritamente somente
 leitura** — não tem `type Mutation`. A edição acontece no `PUT /api/consultas/{id}`,
@@ -316,13 +323,14 @@ Outras queries: `minhasConsultas`, `consultasFuturas`, `consultaHistorico(consul
 
 | Situação | REST | GraphQL (`errors[0].extensions.classification`) |
 |---|---|---|
-| Sem token / token inválido | `401` | `UNAUTHORIZED` |
+| Sem token / token inválido | `401` | `401` comum, sem envelope GraphQL — barrado pelo Spring Security antes de chegar à query |
 | Perfil sem permissão, ou dado de outro paciente | `403` | `FORBIDDEN` |
 | Registro inexistente | `404` | `NOT_FOUND` |
 | Regra de negócio ou filtro inválido | `400` | `BAD_REQUEST` |
 | Edição concorrente da mesma consulta | `409` | — (GraphQL é só leitura) |
 
-GraphQL responde **HTTP 200 mesmo em erro** — daí a distinção viver em `classification`.
+Fora a falta de autenticação, o GraphQL responde **HTTP 200 mesmo em erro** — daí a distinção
+viver em `classification`.
 
 ---
 
@@ -348,9 +356,9 @@ Payload:
 }
 ```
 
-**Tratamento de erro:** falha transitória tenta 3 vezes com 1s de intervalo; payload malformado
-lança `EventoInvalidoException`, marcada como não-retryável, e vai **direto** para a DLT — não
-adianta insistir num evento que nunca vai processar.
+**Tratamento de erro:** falha transitória é retentada 3 vezes com 1s de intervalo; payload
+malformado lança `EventoInvalidoException`, marcada como não-retryável, e vai **direto** para a
+DLT — não adianta insistir num evento que nunca vai processar.
 
 ---
 
@@ -406,8 +414,8 @@ append-only) registra tudo o que chegou, inclusive o que chegou atrasado; o **es
 Duplicar o contrato entre serviços é defensável quando eles têm ciclos de release
 independentes. Não é o caso aqui: são **três** serviços no mesmo repositório e no mesmo
 release, e **dois** consumidores do mesmo evento. Duplicar triplicaria a definição e nada
-pegaria a divergência. O módulo é deliberadamente magro — sem Spring Boot, sem JPA — e há um
-teste que trava os nomes dos campos serializados.
+pegaria a divergência. O módulo é deliberadamente magro — sem starters nem auto-configuração,
+sem JPA — e há um teste que trava os nomes dos campos serializados.
 
 ### 6. Uma base por serviço, num único container Postgres
 
@@ -469,7 +477,7 @@ continuam no tópico. Numa fila tradicional as mensagens já teriam sido consumi
 
 ## Testes
 
-**104 testes**, todos executáveis sem Docker.
+**118 testes**, todos executáveis sem Docker.
 
 | Módulo | Classe | Tipo | O que cobre |
 |---|---|---|---|
@@ -477,6 +485,7 @@ continuam no tópico. Numa fila tradicional as mensagens já teriam sido consumi
 | comum | `TokenServiceTest` | JUnit | assinatura adulterada, outro segredo, outro emissor, expirado |
 | agendamento | `ConsultaServiceTest` | Mockito | posse, data no passado, double-booking, versionamento, outbox |
 | agendamento | `SegurancaFluxoIntegrationTest` | MockMvc | login real por perfil, 401 sem/com token adulterado, 403 por papel e por posse |
+| agendamento | `RotaNaoMapeadaIntegrationTest` | `@SpringBootTest` (porta real) | rota inexistente devolve 404 e não 401; rota real sem token continua 401 |
 | agendamento | `OutboxPublisherIntegrationTest` | **EmbeddedKafka** | pendente → publicado, chave da mensagem, versão nos eventos |
 | agendamento | `MigracoesFlywayTest` | `@DataJpaTest` | migrações rodam, `validate` passa, seed com BCrypt, `@MapsId` |
 | notificacao | `NotificacaoServiceTest` | Mockito | upsert idempotente, versão antiga descartada, SMTP fora do ar |
@@ -495,11 +504,11 @@ Relatório de cobertura JaCoCo em `<módulo>/target/site/jacoco/index.html` apó
 `postman/tech-challenge-kafka.postman_collection.json` — 47 requisições em 6 pastas,
 **todas com asserções `pm.test`**. Os tokens são capturados automaticamente no login.
 
-1. **Autenticação** — os quatro perfis + credenciais inválidas
+1. **Autenticação** — login dos três perfis (com dois pacientes) + credenciais inválidas
 2. **Agendamento (REST)** — registrar, listar, editar, cancelar e marcar como realizada
 3. **Histórico (GraphQL)** — queries flexíveis e a trilha de eventos
 4. **Acesso negado** — 401/403 no REST (inclusive a fronteira agenda × prontuário),
-   `UNAUTHORIZED`/`FORBIDDEN`/`NOT_FOUND` no GraphQL
+   401 sem token, `FORBIDDEN` e `NOT_FOUND` no GraphQL
 5. **Validações de domínio** — passado, double-booking, campos obrigatórios, filtros inválidos
 6. **Notificações** — comprova que o evento Kafka produziu a notificação
 
@@ -513,7 +522,7 @@ correta; se alguma asserção da pasta 3 falhar por corrida, configure um delay 
 ## Estrutura do repositório
 
 ```
-tech-challenge-kafka/
+MedHub/
 ├── comum/                        contrato do evento + camada JWT compartilhada
 │   └── src/main/java/br/com/fiap/comum/
 │       ├── evento/               ConsultaEvento, TipoEvento, StatusConsulta, Topicos

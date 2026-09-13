@@ -67,7 +67,7 @@ app:
     remetente: ${MAIL_REMETENTE:nao-responda@hospital.com}
     # Diariamente as 08:00. Para ver o agendador rodando durante a avaliacao, suba com
     #   CRON_LEMBRETES="0 * * * * *" docker compose up
-    # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8025
+    # (dispara a cada minuto) e acompanhe a caixa em http://localhost:8125
     cron-lembretes: ${CRON_LEMBRETES:0 0 8 * * *}
 
 logging:

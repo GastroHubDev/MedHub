@@ -4,7 +4,8 @@
 # Nenhum passo manual: o Postgres cria as tres bases pelo init.sql, o Flyway aplica os
 # schemas e a massa inicial, e os topicos do Kafka sao criados pelo proprio
 # agendamento-service na subida. Cada aplicacao so inicia depois que Kafka e Postgres
-# passam no healthcheck.
+# passam no healthcheck; os consumidores (notificacao e historico) esperam tambem o
+# agendamento-service, para o topico ja existir com as 3 particoes quando se inscreverem.
 #
 # Os container_name sao prefixados com "hospital-" de proposito: esse namespace e GLOBAL no
 # Docker, e nomes genericos como "postgres" ou "agendamento-service" colidem com outros
