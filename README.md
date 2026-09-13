@@ -1,4 +1,4 @@
-# Tech Challenge Fase 3 — Backend Hospitalar com Apache Kafka
+# Tech Challenge Fase 3 - Backend Hospitalar com Apache Kafka
 
 Sistema hospitalar em microsserviços para agendamento de consultas, com **Spring Security**,
 **GraphQL** e **comunicação assíncrona via Apache Kafka**.
@@ -55,7 +55,7 @@ flowchart LR
 sequenceDiagram
     autonumber
     participant E as Enfermeiro
-    participant A as agendamento :8080
+    participant A as agendamento :8180
     participant DB as Postgres
     participant K as Kafka
     participant N as notificacao :8081
@@ -93,7 +93,7 @@ sequenceDiagram
 
 | Serviço | Porta | Papel | API |
 |---|---|---|---|
-| `agendamento-service` | 8080 | Lado de escrita. Autentica, emite o JWT, registra e edita consultas, publica eventos. | REST + Swagger |
+| `agendamento-service` | 8180 | Lado de escrita. Autentica, emite o JWT, registra e edita consultas, publica eventos. | REST + Swagger |
 | `notificacao-service` | 8081 | Consome eventos, envia confirmações e lembretes D-1. | REST (trilha) |
 | `historico-service` | 8082 | Lado de leitura. Read model construído do log de eventos. | **GraphQL** |
 | `comum` | — | Contrato do evento + camada JWT compartilhada. | biblioteca |
@@ -120,9 +120,7 @@ que Kafka e Postgres passam no healthcheck, e os dois consumidores (`notificacao
 `historico-service`) esperam também o `agendamento-service` ficar saudável: assim o tópico já
 existe com as 3 partições quando eles se inscrevem.
 
-> **Portas.** As portas de host ficam na faixa `81xx` porque `8080`, `8081`, `5432`, `1025` e
-> `8025` são disputadas por outros projetos que costumam conviver na mesma máquina. Todas são
-> sobrescrevíveis por variável de ambiente — copie `.env.example` para `.env` e ajuste, ou passe
+> **Portas.** As portas de host ficam na faixa `81xx`, copie `.env.example` para `.env` e ajuste, ou passe
 > na linha de comando: `PORTA_AGENDAMENTO=8280 docker compose up`. As portas **internas** dos
 > containers (8080, 8081, 8082, 5432…) não mudam: são elas que valem para a comunicação entre
 > os serviços.
