@@ -1,1270 +1,2046 @@
 {
-  "info": {
-    "name": "Tech Challenge Fase 3 - Backend Hospitalar com Kafka (v2)",
-    "description": "Collection completa do Tech Challenge Fase 3 (FIAP).\n\nARQUITETURA\n  agendamento-service :8080 (host 8180)  REST, escrita, emite o JWT\n  notificacao-service :8081 (host 8181)  consome os eventos e avisa o paciente\n  historico-service   :8082 (host 8182)  GraphQL, leitura, read model vindo do Kafka\n\nCOMO USAR\n  1. docker compose up --build\n  2. Rode a collection inteira no Runner (Collection > Run).\n     As pastas estao na ordem correta e os tokens sao salvos automaticamente.\n  3. Entre a pasta 2 e a 3 ha propagacao assincrona pelo Kafka (~1-2s). No Runner,\n     configure um delay de 1000ms se alguma asserção da pasta 3 falhar por corrida.\n\nUSUARIOS (senha: senha123)\n  medico@hospital.com      MEDICO      registra, edita e cancela; ve tudo\n  enfermeiro@hospital.com  ENFERMEIRO  registra e consulta; nao edita\n  paciente@hospital.com    PACIENTE    ve apenas as proprias consultas (id 4)\n  paciente2@hospital.com   PACIENTE    usado para provar o bloqueio cruzado (id 5)\n\nOBSERVACAO SOBRE GRAPHQL\n  O GraphQL responde HTTP 200 mesmo em erro. O que distingue os casos e\n  errors[0].extensions.classification: UNAUTHORIZED, FORBIDDEN, NOT_FOUND, BAD_REQUEST.\n  Excecao: uma requisicao SEM TOKEN NENHUM e barrada pelo Spring Security antes de\n  chegar ao motor GraphQL, entao a resposta e um 401 comum, sem envelope GraphQL.\n\nV2 - O QUE MUDOU EM RELACAO A COLLECTION ORIGINAL\n  - 'Medico edita a consulta criada': nao marca mais REALIZADA numa consulta futura\n    (regra de negocio nova: so pode marcar REALIZADA uma consulta que ja aconteceu).\n  - 'GraphQL sem token': corrigido para esperar 401 comum, nao um envelope GraphQL\n    que nunca existiu pra esse caso (a asserção antiga nunca executava de verdade).\n  - Novo: teste de token com assinatura valida mas sem a claim 'role'.\n  - Novo: teste de que cancelar uma consulta libera o horario para reagendar.\n  - Novo: teste de que PUT status=CANCELADA gera a notificacao de cancelamento certa.\n  - Novo: teste de que cancelamento gera notificacao tipo CANCELAMENTO."
-    ,
-    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
-  },
-  "event": [
-    {
-      "listen": "prerequest",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "// Datas relativas: a collection continua valida independentemente de quando for executada.",
-          "const iso = (d) => d.toISOString().slice(0, 19);",
-          "const futuro = new Date(); futuro.setDate(futuro.getDate() + 15); futuro.setHours(9, 0, 0, 0);",
-          "const futuro2 = new Date(); futuro2.setDate(futuro2.getDate() + 16); futuro2.setHours(9, 0, 0, 0);",
-          "const passado = new Date(); passado.setDate(passado.getDate() - 5); passado.setHours(9, 0, 0, 0);",
-          "const regCancel = new Date(); regCancel.setDate(regCancel.getDate() + 20); regCancel.setHours(11, 0, 0, 0);",
-          "const regCancelPut = new Date(); regCancelPut.setDate(regCancelPut.getDate() + 21); regCancelPut.setHours(11, 0, 0, 0);",
-          "if (!pm.collectionVariables.get('dataConsulta')) { pm.collectionVariables.set('dataConsulta', iso(futuro)); }",
-          "pm.collectionVariables.set('dataConsulta2', iso(futuro2));",
-          "pm.collectionVariables.set('dataPassada', iso(passado));",
-          "if (!pm.collectionVariables.get('dataRegCancelamento')) { pm.collectionVariables.set('dataRegCancelamento', iso(regCancel)); }",
-          "if (!pm.collectionVariables.get('dataRegCancelamentoPut')) { pm.collectionVariables.set('dataRegCancelamentoPut', iso(regCancelPut)); }"
-        ]
-      }
-    }
-  ],
-  "variable": [
-    { "key": "urlAgendamento", "value": "http://localhost:8180" },
-    { "key": "urlNotificacao", "value": "http://localhost:8181" },
-    { "key": "urlHistorico", "value": "http://localhost:8182" },
-    { "key": "tokenMedico", "value": "" },
-    { "key": "tokenEnfermeiro", "value": "" },
-    { "key": "tokenPaciente", "value": "" },
-    { "key": "tokenPaciente2", "value": "" },
-    { "key": "tokenSemRole", "value": "" },
-    { "key": "consultaId", "value": "" },
-    { "key": "dataConsulta", "value": "" },
-    { "key": "dataConsulta2", "value": "" },
-    { "key": "dataPassada", "value": "" },
-    { "key": "dataRegCancelamento", "value": "" },
-    { "key": "dataRegCancelamentoPut", "value": "" },
-    { "key": "consultaRegCancelamentoId", "value": "" },
-    { "key": "consultaRegCancelamentoPutId", "value": "" }
-  ],
-  "item": [
-    {
-      "name": "1. Autenticacao",
-      "description": "Obtem os tokens usados pelas demais pastas. O mesmo JWT vale nos tres servicos. Rode esta pasta primeiro (ou use o Runner na collection inteira).",
-      "item": [
-        {
-          "name": "Login MEDICO",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"medico@hospital.com\",\n  \"senha\": \"senha123\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
-                  "pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('MEDICO'));",
-                  "pm.collectionVariables.set('tokenMedico', b.token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login ENFERMEIRO",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"enfermeiro@hospital.com\",\n  \"senha\": \"senha123\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
-                  "pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('ENFERMEIRO'));",
-                  "pm.collectionVariables.set('tokenEnfermeiro', b.token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login PACIENTE (Maria, id 4)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"paciente@hospital.com\",\n  \"senha\": \"senha123\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
-                  "pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('PACIENTE'));",
-                  "pm.collectionVariables.set('tokenPaciente', b.token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login PACIENTE 2 (Joao, id 5)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"paciente2@hospital.com\",\n  \"senha\": \"senha123\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
-                  "pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('PACIENTE'));",
-                  "pm.collectionVariables.set('tokenPaciente2', b.token);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login com senha invalida (401)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "description": "A resposta e identica a de um e-mail inexistente, para nao permitir enumeracao de usuarios.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"medico@hospital.com\",\n  \"senha\": \"errada\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
-                  "pm.test('nao revela se o e-mail existe', () => pm.expect(pm.response.json().detail).to.eql('Credenciais invalidas'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Login com e-mail inexistente (401 identico)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/auth/login" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"ninguem@hospital.com\",\n  \"senha\": \"senha123\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
-                  "pm.test('mesma mensagem do caso anterior', () => pm.expect(pm.response.json().detail).to.eql('Credenciais invalidas'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "2. Agendamento - REST (lado de escrita)",
-      "description": "CRUD de consultas no agendamento-service. Cada escrita grava um evento na outbox, publicado no topico hospital.consultas.v1 em ate 2 segundos.",
-      "item": [
-        {
-          "name": "Enfermeiro registra consulta (201)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Atende ao requisito \"Enfermeiros: podem registrar consultas\".",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\",\n  \"observacoes\": \"Registrada pela enfermagem via Postman\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "const b = pm.response.json();",
-                  "pm.test('nasce AGENDADA na versao 1', () => { pm.expect(b.status).to.eql('AGENDADA'); pm.expect(b.versao).to.eql(1); });",
-                  "pm.collectionVariables.set('consultaId', b.id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Medico lista todas as consultas",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('lista nao vazia', () => pm.expect(pm.response.json().length).to.be.above(0));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Medico filtra apenas futuras",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas?apenasFuturas=true" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const agora = new Date();",
-                  "pm.test('nenhuma consulta no passado', () => pm.response.json().forEach(c => pm.expect(new Date(c.dataHora)).to.be.at.least(agora)));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Medico edita a consulta criada (200)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/{{consultaId}}" },
-            "description": "Atende ao requisito \"Medicos: podem visualizar e editar o historico de consultas\". So observacoes muda de proposito: a consulta esta agendada no futuro (dataConsulta), e marcar REALIZADA so e valido para uma consulta que ja aconteceu - ver a pasta 5 para esse teste especifico. A alteracao chega ao historico-service pelo evento CONSULTA_ATUALIZADA.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"observacoes\": \"Reagendamento confirmado por telefone\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('observacoes atualizadas', () => pm.expect(b.observacoes).to.eql('Reagendamento confirmado por telefone'));",
-                  "pm.test('versao incrementada para 2', () => pm.expect(b.versao).to.eql(2));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente ve apenas as proprias consultas",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Atende ao requisito \"Pacientes: podem visualizar apenas as suas consultas\"."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('todas sao do paciente autenticado', () => pm.response.json().forEach(c => pm.expect(c.paciente.email).to.eql('paciente@hospital.com')));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Medico cancela a consulta 3",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/3/cancelar" },
-            "description": "Publica CONSULTA_CANCELADA; o notificacao-service para de enviar lembretes desta consulta."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Agenda consulta descartavel para teste de cancelamento (201)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Consulta descartavel usada so para provar que cancelar libera o horario para reagendamento (ver o proximo par de requisicoes).",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamento}}\",\n  \"observacoes\": \"Descartavel - teste de cancelamento\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('consultaRegCancelamentoId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Cancela a consulta descartavel (200)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/{{consultaRegCancelamentoId}}/cancelar" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Reagenda no mesmo horario apos cancelamento (201)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Mesmo par medico/horario da consulta que acabou de ser cancelada. O indice unico so bloqueia consultas ativas: cancelar libera o horario para um novo agendamento.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 5,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamento}}\",\n  \"observacoes\": \"Reagendada apos cancelamento\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201 Created (o cancelamento liberou o horario)', () => pm.response.to.have.status(201));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Agenda consulta para teste de cancelamento via PUT (201)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Consulta descartavel usada para provar que cancelar via PUT (em vez do endpoint dedicado) publica o evento certo.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamentoPut}}\",\n  \"observacoes\": \"Descartavel - teste de cancelamento via PUT\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('consultaRegCancelamentoPutId', pm.response.json().id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Cancela via PUT status=CANCELADA (200)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/{{consultaRegCancelamentoPutId}}" },
-            "description": "O PUT tambem aceita status: CANCELADA, alem do endpoint dedicado /cancelar. Precisa publicar CONSULTA_CANCELADA, nao CONSULTA_ATUALIZADA - verificado na pasta 6 (Notificacao de cancelamento via PUT).",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"status\": \"CANCELADA\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "3. Historico - GraphQL (lado de leitura)",
-      "description": "Queries do historico-service. O read model e construido apenas a partir dos eventos do Kafka - rode a pasta 2 antes e aguarde 1-2 segundos para a propagacao.\n\nGraphQL responde HTTP 200 mesmo em erro: o que distingue os casos e errors[0].extensions.classification.",
-      "item": [
-        {
-          "name": "Historico completo de um paciente",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "description": "O campo `eventos` e a trilha de auditoria vinda do Kafka: mostra, na propria resposta, que o historico e derivado do log de eventos.",
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query HistoricoCompleto($pacienteId: ID) {\n  historicoPaciente(pacienteId: $pacienteId) {\n    pacienteId\n    pacienteNome\n    totalConsultas\n    consultas {\n      consultaId\n      dataHora\n      status\n      observacoes\n      medico { nome especialidade }\n      eventos { tipo statusResultante versao ocorridoEm }\n    }\n  }\n}",
-                "variables": "{\n  \"pacienteId\": 4\n}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "const h = b.data.historicoPaciente;",
-                  "pm.test('traz o paciente 4', () => pm.expect(h.pacienteId).to.eql('4'));",
-                  "pm.test('tem consultas', () => pm.expect(h.totalConsultas).to.be.above(0));",
-                  "pm.test('cada consulta traz a trilha de eventos do Kafka', () => h.consultas.forEach(c => pm.expect(c.eventos.length).to.be.above(0)));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Apenas consultas futuras",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query Futuras($pacienteId: ID) {\n  consultasFuturas(pacienteId: $pacienteId) { consultaId dataHora status }\n}",
-                "variables": "{\n  \"pacienteId\": 4\n}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "const agora = new Date();",
-                  "pm.test('nenhuma no passado', () => b.data.consultasFuturas.forEach(c => pm.expect(new Date(c.dataHora)).to.be.at.least(agora)));",
-                  "pm.test('nenhuma cancelada aparece como futura', () => b.data.consultasFuturas.forEach(c => pm.expect(c.status).to.eql('AGENDADA')));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Filtro combinado: status + especialidade",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "description": "Demonstra a consulta flexivel pedida no enunciado: os filtros combinam sem multiplicar endpoints. Tambem cobre o filtro por especialidade contra o Postgres real (uma combinacao de tipos que ja teve historico de bugs de driver).",
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query Filtrado($pacienteId: ID, $filtro: FiltroHistorico) {\n  historicoPaciente(pacienteId: $pacienteId, filtro: $filtro) {\n    totalConsultas\n    consultas { consultaId status medico { especialidade } }\n  }\n}",
-                "variables": "{\n  \"pacienteId\": 4,\n  \"filtro\": {\n    \"status\": [\"AGENDADA\"],\n    \"especialidade\": \"Cardiologia\"\n  }\n}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "pm.test('respeita os dois filtros', () => b.data.historicoPaciente.consultas.forEach(c => { pm.expect(c.status).to.eql('AGENDADA'); pm.expect(c.medico.especialidade).to.eql('Cardiologia'); }));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente consulta o proprio historico",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "description": "O paciente nao informa id: o servico usa o do token.",
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query { minhasConsultas { consultaId status paciente { id email } } }",
-                "variables": "{}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "pm.test('todas sao do proprio paciente', () => b.data.minhasConsultas.forEach(c => pm.expect(c.paciente.email).to.eql('paciente@hospital.com')));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Estatisticas do paciente",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query Estatisticas($pacienteId: ID) {\n  estatisticasPaciente(pacienteId: $pacienteId) {\n    pacienteId total agendadas realizadas canceladas futuras\n  }\n}",
-                "variables": "{\n  \"pacienteId\": 4\n}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "const e = b.data.estatisticasPaciente;",
-                  "pm.test('os totais fecham', () => pm.expect(e.agendadas + e.realizadas + e.canceladas).to.eql(e.total));",
-                  "pm.test('futuras nunca passa de agendadas', () => pm.expect(e.futuras).to.be.at.most(e.agendadas));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Detalhe de uma consulta com a trilha",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "description": "Rode depois da edicao na pasta 2: a trilha deve conter CONSULTA_CRIADA e CONSULTA_ATUALIZADA, provando que a edicao do medico atravessou o Kafka ate o historico.",
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query Detalhe($consultaId: ID!) {\n  consultaHistorico(consultaId: $consultaId) {\n    consultaId status versao observacoes\n    eventos { tipo statusResultante versao }\n  }\n}",
-                "variables": "{\n  \"consultaId\": \"{{consultaId}}\"\n}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
-                  "const c = b.data.consultaHistorico;",
-                  "pm.test('a consulta chegou ao historico', () => pm.expect(c).to.not.be.null);",
-                  "pm.test('a trilha registra criacao e atualizacao', () => { const tipos = c.eventos.map(e => e.tipo); pm.expect(tipos).to.include('CONSULTA_CRIADA'); pm.expect(tipos).to.include('CONSULTA_ATUALIZADA'); });"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "4. Acesso negado",
-      "description": "Os limites de cada perfil. No REST o status HTTP e a evidencia; no GraphQL e o campo errors[0].extensions.classification, ja que a resposta e sempre 200 - exceto quando falta token por completo, caso em que a requisicao nem chega ao motor GraphQL (ver o teste dedicado abaixo).",
-      "item": [
-        {
-          "name": "REST sem token (401)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
-                  "pm.test('mensagem de token ausente', () => pm.expect(pm.response.json().erro).to.include('Token'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "REST com token adulterado (401)",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}-assinatura-alterada" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "REST: token valido mas sem claim obrigatoria (401)",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenSemRole}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "Assinatura valida (mesmo segredo HS256 dos tres servicos), mas sem a claim 'role' - simula um token forjado a mao ou emitido por uma versao antiga do servico. O pre-request script desta requisicao monta o JWT e guarda em tokenSemRole. Precisa devolver 401 tratado, nunca um 500."
-          },
-          "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "function base64url(wordArray) {",
-                  "  const base64 = CryptoJS.enc.Base64.stringify(wordArray);",
-                  "  return base64.split('+').join('-').split('/').join('_').split('=').join('');",
-                  "}",
-                  "function base64urlJson(obj) {",
-                  "  return base64url(CryptoJS.enc.Utf8.parse(JSON.stringify(obj)));",
-                  "}",
-                  "const segredoBase64 = 'cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw';",
-                  "const chave = CryptoJS.enc.Base64.parse(segredoBase64);",
-                  "const agora = Math.floor(Date.now() / 1000);",
-                  "const header = base64urlJson({ alg: 'HS256', typ: 'JWT' });",
-                  "const payload = base64urlJson({",
-                  "  sub: 'medico@hospital.com',",
-                  "  iss: 'agendamento-service',",
-                  "  usuarioId: 1,",
-                  "  iat: agora,",
-                  "  exp: agora + 120",
-                  "});",
-                  "const semAssinatura = header + '.' + payload;",
-                  "const assinatura = base64url(CryptoJS.HmacSHA256(semAssinatura, chave));",
-                  "pm.collectionVariables.set('tokenSemRole', semAssinatura + '.' + assinatura);"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized (nao 500)', () => pm.response.to.have.status(401));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente tentando registrar consulta (403)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Enfermeiro tentando editar consulta (403)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/2" },
-            "description": "Editar e prerrogativa do medico; o enfermeiro apenas registra e consulta.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"observacoes\": \"Tentativa indevida\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente listando consultas de outro (403)",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" } ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas?pacienteId=5" },
-            "description": "O servico recusa explicitamente em vez de reescrever silenciosamente para o proprio id."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GraphQL: paciente lendo historico de outro (FORBIDDEN)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query { historicoPaciente(pacienteId: 5) { totalConsultas consultas { consultaId } } }",
-                "variables": "{}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('classificado como FORBIDDEN', () => pm.expect(b.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
-                  "pm.test('nenhum dado vazou', () => pm.expect(b.data == null || b.data.historicoPaciente == null).to.be.true);"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GraphQL sem token (401 - nunca chega a resolver a query)",
-          "request": {
-            "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "description": "Diferente de uma query autenticada mas sem permissao (que responde 200 com errors[0].extensions.classification), a falta de token e barrada pelo Spring Security antes de chegar ao motor GraphQL: a resposta e um 401 comum, sem envelope GraphQL.",
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query { minhasConsultas { consultaId } }",
-                "variables": "{}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
-                  "pm.test('mensagem de token ausente', () => pm.expect(pm.response.json().erro).to.include('Token'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GraphQL: consulta inexistente (NOT_FOUND)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query { consultaHistorico(consultaId: 999999) { consultaId } }",
-                "variables": "{}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('classificado como NOT_FOUND', () => pm.expect(b.errors[0].extensions.classification).to.eql('NOT_FOUND'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "5. Validacoes de dominio",
-      "item": [
-        {
-          "name": "Agendar no passado (400)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataPassada}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
-                  "pm.test('explica o motivo', () => pm.expect(pm.response.json().detail).to.include('data passada'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Double-booking do mesmo medico (400)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "description": "O horario ja foi ocupado pela primeira requisicao da pasta 2. Barrado no servico e, em caso de concorrencia, por um indice unico no banco.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 5,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
-                  "pm.test('acusa conflito de horario', () => pm.expect(pm.response.json().detail).to.include('ja possui uma consulta'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente inexistente (404)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"pacienteId\": 999,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta2}}\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Campos obrigatorios ausentes (400)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas" },
-            "body": {
-              "mode": "raw",
-              "raw": "{}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
-                  "pm.test('identificado como falha de validacao', () => pm.expect(pm.response.json().title).to.eql('Falha de validacao'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Marcar como REALIZADA uma consulta futura (400)",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlAgendamento}}/api/consultas/{{consultaId}}" },
-            "description": "REALIZADA deveria significar 'o paciente ja foi atendido'. A consulta desta pasta esta agendada 15 dias no futuro (dataConsulta): marcar como realizada agora e uma inconsistencia que o servico precisa recusar.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"status\": \"REALIZADA\"\n}",
-              "options": { "raw": { "language": "json" } }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
-                  "pm.test('explica que a consulta ainda nao aconteceu', () => pm.expect(pm.response.json().detail).to.include('ainda nao aconteceu'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "GraphQL: periodo invertido (BAD_REQUEST)",
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Authorization", "value": "Bearer {{tokenMedico}}" },
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "url": { "raw": "{{urlHistorico}}/graphql" },
-            "body": {
-              "mode": "graphql",
-              "graphql": {
-                "query": "query { historicoPaciente(pacienteId: 4,\n    filtro: { de: \"2027-01-01T00:00:00\", ate: \"2026-01-01T00:00:00\" }) { totalConsultas } }",
-                "variables": "{}"
-              }
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('classificado como BAD_REQUEST', () => pm.expect(b.errors[0].extensions.classification).to.eql('BAD_REQUEST'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "6. Notificacoes (efeito do Kafka)",
-      "description": "Comprova que o evento publicado pelo agendamento foi consumido pelo notificacao-service. As mensagens tambem podem ser lidas na caixa do MailHog em http://localhost:8125.\n\nLIMITACAO: o lembrete D-1 (LEMBRETE_24H) nao e testado aqui, porque depende do cron diario (as 8h por padrao). Para testar manualmente, suba o ambiente com CRON_LEMBRETES=\"0 * * * * *\" (dispara a cada minuto) conforme o README, e acompanhe o MailHog.",
-      "item": [
-        {
-          "name": "Notificacoes da consulta criada",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenMedico}}" } ],
-            "url": { "raw": "{{urlNotificacao}}/api/notificacoes?consultaId={{consultaId}}" },
-            "description": "Rode alguns segundos depois da pasta 2. Deve haver CONFIRMACAO (da criacao) e ATUALIZACAO (da edicao feita pelo medico)."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('o evento gerou notificacao', () => pm.expect(b.length).to.be.above(0));",
-                  "pm.test('todas foram enviadas com sucesso', () => b.forEach(n => pm.expect(n.status).to.eql('ENVIADA')));",
-                  "pm.test('inclui a confirmacao da criacao', () => pm.expect(b.map(n => n.tipo)).to.include('CONFIRMACAO'));",
-                  "pm.test('inclui a atualizacao da edicao', () => pm.expect(b.map(n => n.tipo)).to.include('ATUALIZACAO'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Todas as notificacoes",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" } ],
-            "url": { "raw": "{{urlNotificacao}}/api/notificacoes" }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "pm.test('lista nao vazia', () => pm.expect(pm.response.json().length).to.be.above(0));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Paciente nao acessa a trilha operacional (403)",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenPaciente}}" } ],
-            "url": { "raw": "{{urlNotificacao}}/api/notificacoes" },
-            "description": "A trilha de notificacoes e uma visao da equipe clinica, nao um recurso do paciente."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Notificacao de cancelamento (consulta 3)",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" } ],
-            "url": { "raw": "{{urlNotificacao}}/api/notificacoes?consultaId=3" },
-            "description": "A consulta 3 foi cancelada na pasta 2 pelo endpoint dedicado /cancelar. Deve gerar notificacao tipo CANCELAMENTO."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "pm.test('inclui notificacao de cancelamento', () => pm.expect(b.map(n => n.tipo)).to.include('CANCELAMENTO'));"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Notificacao de cancelamento via PUT",
-          "request": {
-            "method": "GET",
-            "header": [ { "key": "Authorization", "value": "Bearer {{tokenEnfermeiro}}" } ],
-            "url": { "raw": "{{urlNotificacao}}/api/notificacoes?consultaId={{consultaRegCancelamentoPutId}}" },
-            "description": "A consulta foi cancelada na pasta 2 via PUT status=CANCELADA, nao pelo endpoint dedicado. Precisa gerar CANCELAMENTO, nunca ATUALIZACAO."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
-                  "const b = pm.response.json();",
-                  "const tipos = b.map(n => n.tipo);",
-                  "pm.test('gerou CANCELAMENTO', () => pm.expect(tipos).to.include('CANCELAMENTO'));",
-                  "pm.test('nao gerou ATUALIZACAO', () => pm.expect(tipos).to.not.include('ATUALIZACAO'));"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    }
-  ]
+	"info": {
+		"name": "Tech Challenge Fase 3 - Backend Hospitalar com Kafka (v2)",
+		"description": "Collection completa do Tech Challenge Fase 3 (FIAP).\n\nARQUITETURA\n  agendamento-service :8080 (host 8180)  REST, escrita, emite o JWT\n  notificacao-service :8081 (host 8181)  consome os eventos e avisa o paciente\n  historico-service   :8082 (host 8182)  GraphQL, leitura, read model vindo do Kafka\n\nCOMO USAR\n  1. docker compose up --build\n  2. Rode a collection inteira no Runner (Collection > Run).\n     As pastas estao na ordem correta e os tokens sao salvos automaticamente.\n  3. Entre a pasta 2 e a 3 ha propagacao assincrona pelo Kafka (~1-2s). No Runner,\n     configure um delay de 1000ms se alguma asserção da pasta 3 falhar por corrida.\n\nUSUARIOS (senha: senha123)\n  medico@hospital.com      MEDICO      registra, edita e cancela; ve tudo\n  enfermeiro@hospital.com  ENFERMEIRO  registra e consulta; nao edita\n  paciente@hospital.com    PACIENTE    ve apenas as proprias consultas (id 4)\n  paciente2@hospital.com   PACIENTE    usado para provar o bloqueio cruzado (id 5)\n\nOBSERVACAO SOBRE GRAPHQL\n  O GraphQL responde HTTP 200 mesmo em erro. O que distingue os casos e\n  errors[0].extensions.classification: UNAUTHORIZED, FORBIDDEN, NOT_FOUND, BAD_REQUEST.\n  Excecao: uma requisicao SEM TOKEN NENHUM e barrada pelo Spring Security antes de\n  chegar ao motor GraphQL, entao a resposta e um 401 comum, sem envelope GraphQL.\n\nV2 - O QUE MUDOU EM RELACAO A COLLECTION ORIGINAL\n  - 'Medico edita a consulta criada': nao marca mais REALIZADA numa consulta futura\n    (regra de negocio nova: so pode marcar REALIZADA uma consulta que ja aconteceu).\n  - 'GraphQL sem token': corrigido para esperar 401 comum, nao um envelope GraphQL\n    que nunca existiu pra esse caso (a asserção antiga nunca executava de verdade).\n  - Novo: teste de token com assinatura valida mas sem a claim 'role'.\n  - Novo: teste de que cancelar uma consulta libera o horario para reagendar.\n  - Novo: teste de que PUT status=CANCELADA gera a notificacao de cancelamento certa.\n  - Novo: teste de que cancelamento gera notificacao tipo CANCELAMENTO.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"// Datas relativas: a collection continua valida independentemente de quando for executada.",
+					"const iso = (d) => d.toISOString().slice(0, 19);",
+					"const futuro = new Date(); futuro.setDate(futuro.getDate() + 15); futuro.setHours(9, 0, 0, 0);",
+					"const futuro2 = new Date(); futuro2.setDate(futuro2.getDate() + 16); futuro2.setHours(9, 0, 0, 0);",
+					"const passado = new Date(); passado.setDate(passado.getDate() - 5); passado.setHours(9, 0, 0, 0);",
+					"const regCancel = new Date(); regCancel.setDate(regCancel.getDate() + 20); regCancel.setHours(11, 0, 0, 0);",
+					"const regCancelPut = new Date(); regCancelPut.setDate(regCancelPut.getDate() + 21); regCancelPut.setHours(11, 0, 0, 0);",
+					"if (!pm.collectionVariables.get('dataConsulta')) { pm.collectionVariables.set('dataConsulta', iso(futuro)); }",
+					"pm.collectionVariables.set('dataConsulta2', iso(futuro2));",
+					"pm.collectionVariables.set('dataPassada', iso(passado));",
+					"if (!pm.collectionVariables.get('dataRegCancelamento')) { pm.collectionVariables.set('dataRegCancelamento', iso(regCancel)); }",
+					"if (!pm.collectionVariables.get('dataRegCancelamentoPut')) { pm.collectionVariables.set('dataRegCancelamentoPut', iso(regCancelPut)); }"
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "urlAgendamento",
+			"value": "http://localhost:8180"
+		},
+		{
+			"key": "urlNotificacao",
+			"value": "http://localhost:8181"
+		},
+		{
+			"key": "urlHistorico",
+			"value": "http://localhost:8182"
+		},
+		{
+			"key": "tokenMedico",
+			"value": ""
+		},
+		{
+			"key": "tokenEnfermeiro",
+			"value": ""
+		},
+		{
+			"key": "tokenPaciente",
+			"value": ""
+		},
+		{
+			"key": "tokenPaciente2",
+			"value": ""
+		},
+		{
+			"key": "tokenSemRole",
+			"value": ""
+		},
+		{
+			"key": "consultaId",
+			"value": ""
+		},
+		{
+			"key": "dataConsulta",
+			"value": ""
+		},
+		{
+			"key": "dataConsulta2",
+			"value": ""
+		},
+		{
+			"key": "dataPassada",
+			"value": ""
+		},
+		{
+			"key": "dataRegCancelamento",
+			"value": ""
+		},
+		{
+			"key": "dataRegCancelamentoPut",
+			"value": ""
+		},
+		{
+			"key": "consultaRegCancelamentoId",
+			"value": ""
+		},
+		{
+			"key": "consultaRegCancelamentoPutId",
+			"value": ""
+		}
+	],
+	"item": [
+		{
+			"name": "1. Autenticacao",
+			"description": "Obtem os tokens usados pelas demais pastas. O mesmo JWT vale nos tres servicos. Rode esta pasta primeiro (ou use o Runner na collection inteira).",
+			"item": [
+				{
+					"name": "Login MEDICO",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"medico@hospital.com\",\n  \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
+									"pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('MEDICO'));",
+									"pm.collectionVariables.set('tokenMedico', b.token);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login ENFERMEIRO",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"enfermeiro@hospital.com\",\n  \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
+									"pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('ENFERMEIRO'));",
+									"pm.collectionVariables.set('tokenEnfermeiro', b.token);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login PACIENTE (Maria, id 4)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"paciente@hospital.com\",\n  \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
+									"pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('PACIENTE'));",
+									"pm.collectionVariables.set('tokenPaciente', b.token);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login PACIENTE 2 (Joao, id 5)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"paciente2@hospital.com\",\n  \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('devolve token Bearer', () => { pm.expect(b.tipo).to.eql('Bearer'); pm.expect(b.token).to.be.a('string').and.not.empty; });",
+									"pm.test('perfil correto', () => pm.expect(b.perfil).to.eql('PACIENTE'));",
+									"pm.collectionVariables.set('tokenPaciente2', b.token);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login com senha invalida (401)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"description": "A resposta e identica a de um e-mail inexistente, para nao permitir enumeracao de usuarios.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"medico@hospital.com\",\n  \"senha\": \"errada\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+									"pm.test('nao revela se o e-mail existe', () => pm.expect(pm.response.json().detail).to.eql('Credenciais invalidas'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Login com e-mail inexistente (401 identico)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/auth/login",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"login"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"ninguem@hospital.com\",\n  \"senha\": \"senha123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+									"pm.test('mesma mensagem do caso anterior', () => pm.expect(pm.response.json().detail).to.eql('Credenciais invalidas'));"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "2. Agendamento - REST (lado de escrita)",
+			"description": "CRUD de consultas no agendamento-service. Cada escrita grava um evento na outbox, publicado no topico hospital.consultas.v1 em ate 2 segundos.",
+			"item": [
+				{
+					"name": "Enfermeiro registra consulta (201)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Atende ao requisito \"Enfermeiros: podem registrar consultas\".",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\",\n  \"observacoes\": \"Registrada pela enfermagem via Postman\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created', () => pm.response.to.have.status(201));",
+									"const b = pm.response.json();",
+									"pm.test('nasce AGENDADA na versao 1', () => { pm.expect(b.status).to.eql('AGENDADA'); pm.expect(b.versao).to.eql(1); });",
+									"pm.collectionVariables.set('consultaId', b.id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Medico lista todas as consultas",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('lista nao vazia', () => pm.expect(pm.response.json().length).to.be.above(0));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Medico filtra apenas futuras",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas?apenasFuturas=true",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							],
+							"query": [
+								{
+									"key": "apenasFuturas",
+									"value": "true"
+								}
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const agora = new Date();",
+									"pm.test('nenhuma consulta no passado', () => pm.response.json().forEach(c => pm.expect(new Date(c.dataHora)).to.be.at.least(agora)));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Medico edita a consulta criada (200)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/{{consultaId}}",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"{{consultaId}}"
+							]
+						},
+						"description": "Atende ao requisito \"Medicos: podem visualizar e editar o historico de consultas\". So observacoes muda de proposito: a consulta esta agendada no futuro (dataConsulta), e marcar REALIZADA so e valido para uma consulta que ja aconteceu - ver a pasta 5 para esse teste especifico. A alteracao chega ao historico-service pelo evento CONSULTA_ATUALIZADA.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"observacoes\": \"Reagendamento confirmado por telefone\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('observacoes atualizadas', () => pm.expect(b.observacoes).to.eql('Reagendamento confirmado por telefone'));",
+									"pm.test('versao incrementada para 2', () => pm.expect(b.versao).to.eql(2));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente ve apenas as proprias consultas",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Atende ao requisito \"Pacientes: podem visualizar apenas as suas consultas\"."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('todas sao do paciente autenticado', () => pm.response.json().forEach(c => pm.expect(c.paciente.email).to.eql('paciente@hospital.com')));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Medico cancela a consulta 3",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/3/cancelar",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"3",
+								"cancelar"
+							]
+						},
+						"description": "Publica CONSULTA_CANCELADA; o notificacao-service para de enviar lembretes desta consulta."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Agenda consulta descartavel para teste de cancelamento (201)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Consulta descartavel usada so para provar que cancelar libera o horario para reagendamento (ver o proximo par de requisicoes).",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamento}}\",\n  \"observacoes\": \"Descartavel - teste de cancelamento\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created', () => pm.response.to.have.status(201));",
+									"pm.collectionVariables.set('consultaRegCancelamentoId', pm.response.json().id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Cancela a consulta descartavel (200)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/{{consultaRegCancelamentoId}}/cancelar",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"{{consultaRegCancelamentoId}}",
+								"cancelar"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Reagenda no mesmo horario apos cancelamento (201)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Mesmo par medico/horario da consulta que acabou de ser cancelada. O indice unico so bloqueia consultas ativas: cancelar libera o horario para um novo agendamento.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 5,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamento}}\",\n  \"observacoes\": \"Reagendada apos cancelamento\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created (o cancelamento liberou o horario)', () => pm.response.to.have.status(201));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Agenda consulta para teste de cancelamento via PUT (201)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Consulta descartavel usada para provar que cancelar via PUT (em vez do endpoint dedicado) publica o evento certo.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 2,\n  \"dataHora\": \"{{dataRegCancelamentoPut}}\",\n  \"observacoes\": \"Descartavel - teste de cancelamento via PUT\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('201 Created', () => pm.response.to.have.status(201));",
+									"pm.collectionVariables.set('consultaRegCancelamentoPutId', pm.response.json().id);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Cancela via PUT status=CANCELADA (200)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/{{consultaRegCancelamentoPutId}}",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"{{consultaRegCancelamentoPutId}}"
+							]
+						},
+						"description": "O PUT tambem aceita status: CANCELADA, alem do endpoint dedicado /cancelar. Precisa publicar CONSULTA_CANCELADA, nao CONSULTA_ATUALIZADA - verificado na pasta 6 (Notificacao de cancelamento via PUT).",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"CANCELADA\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('status CANCELADA', () => pm.expect(pm.response.json().status).to.eql('CANCELADA'));"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "3. Historico - GraphQL (lado de leitura)",
+			"description": "Queries do historico-service. O read model e construido apenas a partir dos eventos do Kafka - rode a pasta 2 antes e aguarde 1-2 segundos para a propagacao.\n\nGraphQL responde HTTP 200 mesmo em erro: o que distingue os casos e errors[0].extensions.classification.",
+			"item": [
+				{
+					"name": "Historico completo de um paciente",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "O campo `eventos` e a trilha de auditoria vinda do Kafka: mostra, na propria resposta, que o historico e derivado do log de eventos.",
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query HistoricoCompleto($pacienteId: ID) {\n  historicoPaciente(pacienteId: $pacienteId) {\n    pacienteId\n    pacienteNome\n    totalConsultas\n    consultas {\n      consultaId\n      dataHora\n      status\n      observacoes\n      medico { nome especialidade }\n      eventos { tipo statusResultante versao ocorridoEm }\n    }\n  }\n}",
+								"variables": "{\n  \"pacienteId\": 4\n}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"const h = b.data.historicoPaciente;",
+									"pm.test('traz o paciente 4', () => pm.expect(h.pacienteId).to.eql('4'));",
+									"pm.test('tem consultas', () => pm.expect(h.totalConsultas).to.be.above(0));",
+									"pm.test('cada consulta traz a trilha de eventos do Kafka', () => h.consultas.forEach(c => pm.expect(c.eventos.length).to.be.above(0)));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Apenas consultas futuras",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Futuras($pacienteId: ID) {\n  consultasFuturas(pacienteId: $pacienteId) { consultaId dataHora status }\n}",
+								"variables": "{\n  \"pacienteId\": 4\n}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"const agora = new Date();",
+									"pm.test('nenhuma no passado', () => b.data.consultasFuturas.forEach(c => pm.expect(new Date(c.dataHora)).to.be.at.least(agora)));",
+									"pm.test('nenhuma cancelada aparece como futura', () => b.data.consultasFuturas.forEach(c => pm.expect(c.status).to.eql('AGENDADA')));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Filtro combinado: status + especialidade",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "Demonstra a consulta flexivel pedida no enunciado: os filtros combinam sem multiplicar endpoints. Tambem cobre o filtro por especialidade contra o Postgres real (uma combinacao de tipos que ja teve historico de bugs de driver).",
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Filtrado($pacienteId: ID, $filtro: FiltroHistorico) {\n  historicoPaciente(pacienteId: $pacienteId, filtro: $filtro) {\n    totalConsultas\n    consultas { consultaId status medico { especialidade } }\n  }\n}",
+								"variables": "{\n  \"pacienteId\": 4,\n  \"filtro\": {\n    \"status\": [\"AGENDADA\"],\n    \"especialidade\": \"Cardiologia\"\n  }\n}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"pm.test('respeita os dois filtros', () => b.data.historicoPaciente.consultas.forEach(c => { pm.expect(c.status).to.eql('AGENDADA'); pm.expect(c.medico.especialidade).to.eql('Cardiologia'); }));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente consulta o proprio historico",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "O paciente nao informa id: o servico usa o do token.",
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query { minhasConsultas { consultaId status paciente { id email } } }",
+								"variables": "{}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"pm.test('todas sao do proprio paciente', () => b.data.minhasConsultas.forEach(c => pm.expect(c.paciente.email).to.eql('paciente@hospital.com')));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Estatisticas do paciente",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Estatisticas($pacienteId: ID) {\n  estatisticasPaciente(pacienteId: $pacienteId) {\n    pacienteId total agendadas realizadas canceladas futuras\n  }\n}",
+								"variables": "{\n  \"pacienteId\": 4\n}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"const e = b.data.estatisticasPaciente;",
+									"pm.test('os totais fecham', () => pm.expect(e.agendadas + e.realizadas + e.canceladas).to.eql(e.total));",
+									"pm.test('futuras nunca passa de agendadas', () => pm.expect(e.futuras).to.be.at.most(e.agendadas));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Detalhe de uma consulta com a trilha",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "Rode depois da edicao na pasta 2: a trilha deve conter CONSULTA_CRIADA e CONSULTA_ATUALIZADA, provando que a edicao do medico atravessou o Kafka ate o historico.",
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query Detalhe($consultaId: ID!) {\n  consultaHistorico(consultaId: $consultaId) {\n    consultaId status versao observacoes\n    eventos { tipo statusResultante versao }\n  }\n}",
+								"variables": "{\n  \"consultaId\": \"{{consultaId}}\"\n}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('sem erros GraphQL', () => pm.expect(b.errors, JSON.stringify(b.errors)).to.be.undefined);",
+									"const c = b.data.consultaHistorico;",
+									"pm.test('a consulta chegou ao historico', () => pm.expect(c).to.not.be.null);",
+									"pm.test('a trilha registra criacao e atualizacao', () => { const tipos = c.eventos.map(e => e.tipo); pm.expect(tipos).to.include('CONSULTA_CRIADA'); pm.expect(tipos).to.include('CONSULTA_ATUALIZADA'); });"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "4. Acesso negado",
+			"description": "Os limites de cada perfil. No REST o status HTTP e a evidencia; no GraphQL e o campo errors[0].extensions.classification, ja que a resposta e sempre 200 - exceto quando falta token por completo, caso em que a requisicao nem chega ao motor GraphQL (ver o teste dedicado abaixo).",
+			"item": [
+				{
+					"name": "REST sem token (401)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+									"pm.test('mensagem de token ausente', () => pm.expect(pm.response.json().erro).to.include('Token'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "REST com token adulterado (401)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}-assinatura-alterada"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "REST: token valido mas sem claim obrigatoria (401)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenSemRole}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "Assinatura valida (mesmo segredo HS256 dos tres servicos), mas sem a claim 'role' - simula um token forjado a mao ou emitido por uma versao antiga do servico. O pre-request script desta requisicao monta o JWT e guarda em tokenSemRole. Precisa devolver 401 tratado, nunca um 500."
+					},
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"function base64url(wordArray) {",
+									"  const base64 = CryptoJS.enc.Base64.stringify(wordArray);",
+									"  return base64.split('+').join('-').split('/').join('_').split('=').join('');",
+									"}",
+									"function base64urlJson(obj) {",
+									"  return base64url(CryptoJS.enc.Utf8.parse(JSON.stringify(obj)));",
+									"}",
+									"const segredoBase64 = 'cGFyYS1kZXNlbnZvbHZpbWVudG8tYXBlbmFzLXRyb3F1ZS1lbS1wcm9kdWNhby0xMjM0NTY3ODkw';",
+									"const chave = CryptoJS.enc.Base64.parse(segredoBase64);",
+									"const agora = Math.floor(Date.now() / 1000);",
+									"const header = base64urlJson({ alg: 'HS256', typ: 'JWT' });",
+									"const payload = base64urlJson({",
+									"  sub: 'medico@hospital.com',",
+									"  iss: 'agendamento-service',",
+									"  usuarioId: 1,",
+									"  iat: agora,",
+									"  exp: agora + 120",
+									"});",
+									"const semAssinatura = header + '.' + payload;",
+									"const assinatura = base64url(CryptoJS.HmacSHA256(semAssinatura, chave));",
+									"pm.collectionVariables.set('tokenSemRole', semAssinatura + '.' + assinatura);"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized (nao 500)', () => pm.response.to.have.status(401));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente tentando registrar consulta (403)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Enfermeiro tentando editar consulta (403)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/2",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"2"
+							]
+						},
+						"description": "Editar e prerrogativa do medico; o enfermeiro apenas registra e consulta.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"observacoes\": \"Tentativa indevida\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente listando consultas de outro (403)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas?pacienteId=5",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							],
+							"query": [
+								{
+									"key": "pacienteId",
+									"value": "5"
+								}
+							]
+						},
+						"description": "O servico recusa explicitamente em vez de reescrever silenciosamente para o proprio id."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "GraphQL: paciente lendo historico de outro (FORBIDDEN)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query { historicoPaciente(pacienteId: 5) { totalConsultas consultas { consultaId } } }",
+								"variables": "{}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('classificado como FORBIDDEN', () => pm.expect(b.errors[0].extensions.classification).to.eql('FORBIDDEN'));",
+									"pm.test('nenhum dado vazou', () => pm.expect(b.data == null || b.data.historicoPaciente == null).to.be.true);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "GraphQL sem token (401 - nunca chega a resolver a query)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"description": "Diferente de uma query autenticada mas sem permissao (que responde 200 com errors[0].extensions.classification), a falta de token e barrada pelo Spring Security antes de chegar ao motor GraphQL: a resposta e um 401 comum, sem envelope GraphQL.",
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query { minhasConsultas { consultaId } }",
+								"variables": "{}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+									"pm.test('mensagem de token ausente', () => pm.expect(pm.response.json().erro).to.include('Token'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "GraphQL: consulta inexistente (NOT_FOUND)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query { consultaHistorico(consultaId: 999999) { consultaId } }",
+								"variables": "{}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('classificado como NOT_FOUND', () => pm.expect(b.errors[0].extensions.classification).to.eql('NOT_FOUND'));"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "5. Validacoes de dominio",
+			"item": [
+				{
+					"name": "Agendar no passado (400)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 4,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataPassada}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+									"pm.test('explica o motivo', () => pm.expect(pm.response.json().detail).to.include('data passada'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Double-booking do mesmo medico (400)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"description": "O horario ja foi ocupado pela primeira requisicao da pasta 2. Barrado no servico e, em caso de concorrencia, por um indice unico no banco.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 5,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+									"pm.test('acusa conflito de horario', () => pm.expect(pm.response.json().detail).to.include('ja possui uma consulta'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente inexistente (404)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pacienteId\": 999,\n  \"medicoId\": 1,\n  \"dataHora\": \"{{dataConsulta2}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Campos obrigatorios ausentes (400)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas"
+							]
+						},
+						"body": {
+							"mode": "raw",
+							"raw": "{}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+									"pm.test('identificado como falha de validacao', () => pm.expect(pm.response.json().title).to.eql('Falha de validacao'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Marcar como REALIZADA uma consulta futura (400)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlAgendamento}}/api/consultas/{{consultaId}}",
+							"host": [
+								"{{urlAgendamento}}"
+							],
+							"path": [
+								"api",
+								"consultas",
+								"{{consultaId}}"
+							]
+						},
+						"description": "REALIZADA deveria significar 'o paciente ja foi atendido'. A consulta desta pasta esta agendada 15 dias no futuro (dataConsulta): marcar como realizada agora e uma inconsistencia que o servico precisa recusar.",
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"REALIZADA\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+									"pm.test('explica que a consulta ainda nao aconteceu', () => pm.expect(pm.response.json().detail).to.include('ainda nao aconteceu'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "GraphQL: periodo invertido (BAD_REQUEST)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"url": {
+							"raw": "{{urlHistorico}}/graphql",
+							"host": [
+								"{{urlHistorico}}"
+							],
+							"path": [
+								"graphql"
+							]
+						},
+						"body": {
+							"mode": "graphql",
+							"graphql": {
+								"query": "query { historicoPaciente(pacienteId: 4,\n    filtro: { de: \"2027-01-01T00:00:00\", ate: \"2026-01-01T00:00:00\" }) { totalConsultas } }",
+								"variables": "{}"
+							}
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('HTTP 200 (GraphQL sempre responde 200)', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('classificado como BAD_REQUEST', () => pm.expect(b.errors[0].extensions.classification).to.eql('BAD_REQUEST'));"
+								]
+							}
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "6. Notificacoes (efeito do Kafka)",
+			"description": "Comprova que o evento publicado pelo agendamento foi consumido pelo notificacao-service. As mensagens tambem podem ser lidas na caixa do MailHog em http://localhost:8125.\n\nLIMITACAO: o lembrete D-1 (LEMBRETE_24H) nao e testado aqui, porque depende do cron diario (as 8h por padrao). Para testar manualmente, suba o ambiente com CRON_LEMBRETES=\"0 * * * * *\" (dispara a cada minuto) conforme o README, e acompanhe o MailHog.",
+			"item": [
+				{
+					"name": "Notificacoes da consulta criada",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenMedico}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlNotificacao}}/api/notificacoes?consultaId={{consultaId}}",
+							"host": [
+								"{{urlNotificacao}}"
+							],
+							"path": [
+								"api",
+								"notificacoes"
+							],
+							"query": [
+								{
+									"key": "consultaId",
+									"value": "{{consultaId}}"
+								}
+							]
+						},
+						"description": "Rode alguns segundos depois da pasta 2. Deve haver CONFIRMACAO (da criacao) e ATUALIZACAO (da edicao feita pelo medico)."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('o evento gerou notificacao', () => pm.expect(b.length).to.be.above(0));",
+									"pm.test('todas foram enviadas com sucesso', () => b.forEach(n => pm.expect(n.status).to.eql('ENVIADA')));",
+									"pm.test('inclui a confirmacao da criacao', () => pm.expect(b.map(n => n.tipo)).to.include('CONFIRMACAO'));",
+									"pm.test('inclui a atualizacao da edicao', () => pm.expect(b.map(n => n.tipo)).to.include('ATUALIZACAO'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Todas as notificacoes",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlNotificacao}}/api/notificacoes",
+							"host": [
+								"{{urlNotificacao}}"
+							],
+							"path": [
+								"api",
+								"notificacoes"
+							]
+						}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"pm.test('lista nao vazia', () => pm.expect(pm.response.json().length).to.be.above(0));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Paciente nao acessa a trilha operacional (403)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenPaciente}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlNotificacao}}/api/notificacoes",
+							"host": [
+								"{{urlNotificacao}}"
+							],
+							"path": [
+								"api",
+								"notificacoes"
+							]
+						},
+						"description": "A trilha de notificacoes e uma visao da equipe clinica, nao um recurso do paciente."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Notificacao de cancelamento (consulta 3)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlNotificacao}}/api/notificacoes?consultaId=3",
+							"host": [
+								"{{urlNotificacao}}"
+							],
+							"path": [
+								"api",
+								"notificacoes"
+							],
+							"query": [
+								{
+									"key": "consultaId",
+									"value": "3"
+								}
+							]
+						},
+						"description": "A consulta 3 foi cancelada na pasta 2 pelo endpoint dedicado /cancelar. Deve gerar notificacao tipo CANCELAMENTO."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"pm.test('inclui notificacao de cancelamento', () => pm.expect(b.map(n => n.tipo)).to.include('CANCELAMENTO'));"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Notificacao de cancelamento via PUT",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{tokenEnfermeiro}}"
+							}
+						],
+						"url": {
+							"raw": "{{urlNotificacao}}/api/notificacoes?consultaId={{consultaRegCancelamentoPutId}}",
+							"host": [
+								"{{urlNotificacao}}"
+							],
+							"path": [
+								"api",
+								"notificacoes"
+							],
+							"query": [
+								{
+									"key": "consultaId",
+									"value": "{{consultaRegCancelamentoPutId}}"
+								}
+							]
+						},
+						"description": "A consulta foi cancelada na pasta 2 via PUT status=CANCELADA, nao pelo endpoint dedicado. Precisa gerar CANCELAMENTO, nunca ATUALIZACAO."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('200 OK', () => pm.response.to.have.status(200));",
+									"const b = pm.response.json();",
+									"const tipos = b.map(n => n.tipo);",
+									"pm.test('gerou CANCELAMENTO', () => pm.expect(tipos).to.include('CANCELAMENTO'));",
+									"pm.test('nao gerou ATUALIZACAO', () => pm.expect(tipos).to.not.include('ATUALIZACAO'));"
+								]
+							}
+						}
+					]
+				}
+			]
+		}
+	]
 }
