@@ -54,4 +54,19 @@ public class ContextoSeguranca {
             throw new AccessDeniedException("Paciente so pode acessar as proprias consultas");
         }
     }
+
+    /**
+     * Reserva ao medico um ato que e clinico, e nao de agenda.
+     *
+     * <p>O enunciado separa os dois: "medicos podem visualizar e editar o <b>historico</b> de
+     * consultas", enquanto "medicos e enfermeiros poderao registrar novas consultas e modificar
+     * <b>consultas existentes</b>". Remarcar e cancelar sao agenda e cabem aos dois perfis;
+     * atestar o que aconteceu no atendimento e prontuario e cabe so ao medico. Como a distincao
+     * e por campo e nao por rota, ela nao caberia num {@code @PreAuthorize} do controller.</p>
+     */
+    public void exigirMedico(String acao) {
+        if (!usuarioLogado().isMedico()) {
+            throw new AccessDeniedException("Apenas medicos podem " + acao);
+        }
+    }
 }

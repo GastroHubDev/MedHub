@@ -169,7 +169,8 @@ class OutboxPublisherIntegrationTest {
         outboxPublisher.publicarPendentes();
         ultimoEventoDoTopico();
 
-        consultaService.cancelar(consulta.getId());
+        consultaService.atualizar(consulta.getId(),
+                new AtualizarConsultaRequest(null, StatusConsulta.CANCELADA, null));
         outboxPublisher.publicarPendentes();
 
         final ConsultaEvento evento = ultimoEventoDoTopico();
