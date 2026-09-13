@@ -17,11 +17,10 @@
 #   PORTA_AGENDAMENTO=8280 docker compose up
 #
 # As portas de CONTAINER (8080, 8081, 8082, 5432...) nao mudam: sao elas que valem para a
-# comunicacao interna, para os upstreams do nginx e para o front.
+# comunicacao interna entre os servicos.
 #
 # Portas uteis:
-#   http://localhost:3030                  Console de testes (front) - comeca por aqui
-#   http://localhost:8180/swagger-ui.html  API de agendamento (REST)
+#   http://localhost:8180/swagger-ui.html  API de agendamento (REST) - comece por aqui
 #   http://localhost:8182/graphiql         Historico (GraphQL)
 #   http://localhost:8190                  Kafka UI - topicos, mensagens e lag dos grupos
 #   http://localhost:8125                  MailHog - caixa de entrada dos lembretes
@@ -211,35 +210,6 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
-    restart: unless-stopped
-    networks: [hospital]
-
-  # ----------------------------------------------------------------
-  # Front
-  # ----------------------------------------------------------------
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: hospital-frontend
-    ports:
-      - "${PORTA_FRONT:-3030}:80"
-    # Nao e cosmetico: o nginx resolve os nomes dos upstreams na subida e SE RECUSA A INICIAR
-    # se um deles ainda nao existe na rede. Esperar os tres saudaveis evita esse tombo.
-    depends_on:
-      agendamento-service:
-        condition: service_healthy
-      notificacao-service:
-        condition: service_healthy
-      historico-service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/ > /dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 5s
     restart: unless-stopped
     networks: [hospital]
 
