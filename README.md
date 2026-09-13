@@ -555,9 +555,10 @@ Relatório de cobertura JaCoCo em `<módulo>/target/site/jacoco/index.html` apó
 5. **Validações de domínio** — passado, double-booking, campos obrigatórios, filtros inválidos
 6. **Notificações** — comprova que o evento Kafka produziu a notificação
 
-Importe também `tech-challenge-kafka.postman_environment.json` e rode a collection inteira no
-**Collection Runner**. As pastas estão na ordem correta; se alguma asserção da pasta 3 falhar
-por corrida, configure um delay de 1000 ms no Runner (a propagação pelo Kafka leva ~1-2 s).
+É um arquivo só: as URLs dos serviços já vêm como variáveis da collection, sem environment
+separado. Importe e rode a collection inteira no **Collection Runner**. As pastas estão na ordem
+correta; se alguma asserção da pasta 3 falhar por corrida, configure um delay de 1000 ms no Runner
+(a propagação pelo Kafka leva ~1-2 s).
 
 ---
 
@@ -573,7 +574,7 @@ tech-challenge-kafka/
 ├── notificacao-service/          :8081 consumer, projeção, lembretes, SMTP
 ├── historico-service/            :8082 consumer, read model, GraphQL
 ├── docker/postgres/init.sql      cria as três bases
-├── postman/                      collection + environment
+├── postman/                      collection (URLs e tokens como variáveis)
 ├── docker-compose.yml
 └── pom.xml                       agregador multi-módulo
 ```
