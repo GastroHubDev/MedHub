@@ -483,19 +483,26 @@ Relatório de cobertura JaCoCo em `<módulo>/target/site/jacoco/index.html` apó
 
 ## Collection Postman
 
-`postman/tech-challenge-kafka.postman_collection.json` — 34 requisições em 6 pastas,
-**todas com asserções `pm.test`**. Os tokens são capturados automaticamente no login.
+`postman/tech-challenge-kafka-v2.postman_collection.json` — 43 requisições em 6 pastas,
+**todas com asserções `pm.test`**, 97 verificações automáticas no total. Os tokens dos quatro
+perfis são capturados automaticamente no login e reutilizados pelas requisições seguintes.
 
-1. **Autenticação** — os quatro perfis + credenciais inválidas
-2. **Agendamento (REST)** — registrar, listar, editar, cancelar
-3. **Histórico (GraphQL)** — queries flexíveis e a trilha de eventos
-4. **Acesso negado** — 401/403 no REST, `UNAUTHORIZED`/`FORBIDDEN`/`NOT_FOUND` no GraphQL
-5. **Validações de domínio** — passado, double-booking, campos obrigatórios
-6. **Notificações** — comprova que o evento Kafka produziu a notificação
+1. **Autenticação** (6) — os quatro perfis autenticam; senha errada e e-mail inexistente
+   devolvem o mesmo 401
+2. **Agendamento (REST)** (11) — registrar, listar, filtrar futuras, editar, cancelar,
+   inclusive cancelar via `PUT status=CANCELADA` e reagendar no horário liberado
+3. **Histórico (GraphQL)** (6) — queries flexíveis, filtros combinados, estatísticas e a
+   trilha de eventos
+4. **Acesso negado** (9) — 401/403 no REST e `UNAUTHORIZED`/`FORBIDDEN`/`NOT_FOUND` no
+   GraphQL, inclusive token válido sem claim obrigatória
+5. **Validações de domínio** (6) — data no passado, double-booking, paciente inexistente,
+   campos obrigatórios, REALIZADA no futuro, período invertido no filtro
+6. **Notificações** (5) — comprova que o evento Kafka produziu a notificação, na criação e
+   no cancelamento
 
 Importe também `tech-challenge-kafka.postman_environment.json` e rode a collection inteira no
-**Collection Runner**. As pastas estão na ordem correta; se alguma asserção da pasta 3 falhar
-por corrida, configure um delay de 1000 ms no Runner (a propagação pelo Kafka leva ~1-2 s).
+**Collection Runner**. As pastas estão na ordem correta; se alguma asserção falhar por corrida,
+configure um delay de 1000 ms no Runner (a propagação pelo Kafka leva ~1-2 s).
 
 ---
 
