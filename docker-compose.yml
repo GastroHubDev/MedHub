@@ -173,6 +173,12 @@ services:
         condition: service_healthy
       mailhog:
         condition: service_started
+      # Garante que o topico ja existe com as 3 particoes (criadas pelo agendamento-service
+      # via KafkaAdmin) antes deste consumidor se inscrever: sem isso, ha uma corrida de
+      # startup em que o consumer group pode fechar o rebalance vendo so 1 particao e travar
+      # assim ate a proxima expiracao do cache de metadados do cliente Kafka.
+      agendamento-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health | grep -q UP"]
       interval: 10s
@@ -204,6 +210,10 @@ services:
       postgres:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      # Mesmo motivo do notificacao-service: evita que este consumidor se inscreva no
+      # topico antes das 3 particoes existirem de verdade e fique travado numa so.
+      agendamento-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8082/actuator/health | grep -q UP"]
